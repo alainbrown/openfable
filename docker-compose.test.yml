@@ -1,0 +1,118 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OPENFABLE_DATABASE_URL: "postgresql://openfable:openfable@db:5432/openfable"
+      OPENFABLE_LITELLM_MODEL: "ollama/qwen3:8b"
+      OPENFABLE_LITELLM_API_KEY: ""
+      OPENFABLE_LITELLM_BASE_URL: "http://ollama:11434"
+      OPENFABLE_EMBEDDING_URL: "http://embeddings:80"
+      OPENFABLE_EMBEDDING_MODEL: "BAAI/bge-m3"
+      OPENFABLE_EMBEDDING_API_KEY: ""
+      OPENFABLE_EMBEDDING_DIMENSIONS: "1024"
+      OPENFABLE_DEBUG: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  e2e:
+    image: python:3.12-slim
+    working_dir: /tests
+    volumes:
+      - ./e2e:/tests
+    command: sh -c "pip install -q pytest httpx && pytest -v"
+    environment:
+      OPENFABLE_API_URL: "http://api:8000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: openfable
+      POSTGRES_PASSWORD: openfable
+      POSTGRES_DB: openfable
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfable -d openfable"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    shm_size: 256mb
+    command: >
+      postgres
+        -c maintenance_work_mem=2GB
+        -c shared_buffers=512MB
+        -c max_connections=100
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      OLLAMA_CONTEXT_LENGTH: "65536"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  ollama-pull:
+    image: ollama/ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    entrypoint: ["sh", "-c", "ollama pull qwen3:8b"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    volumes:
+      - tei-models:/data
+    command: --model-id BAAI/bge-m3 --max-batch-tokens 16384
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  pgdata:
+  tei-models:
+  ollama-models:
