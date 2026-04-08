@@ -5,8 +5,6 @@
 
 An open-source retrieval engine implementing [FABLE](https://arxiv.org/abs/2601.18116) (Forest-Based Adaptive Bi-Path LLM-Enhanced Retrieval). OpenFable accepts documents as raw text, builds LLM-enhanced semantic forest indexes, and retrieves relevant content through bi-path retrieval with adaptive budget control.
 
-Retrieval only -- OpenFable returns ranked chunks, not generated answers. Bring your own LLM for generation.
-
 ![OpenFable demo — ingest a document and query it](demo/demo.gif)
 
 ## Quickstart
