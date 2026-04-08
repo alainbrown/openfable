@@ -92,8 +92,7 @@ def _compute_tree_expansion_scores(
     # S_sim(v) = cosine_similarity / max(depth, 1) -- linear depth decay
     all_similarities = {**internal_similarities, **leaf_similarities}
     s_sim: dict[uuid.UUID, float] = {
-        node.id: all_similarities.get(node.id, 0.0) / max(node.depth, 1)
-        for node in nodes
+        node.id: all_similarities.get(node.id, 0.0) / max(node.depth, 1) for node in nodes
     }
 
     # Step 2: S_inh top-down, depth ascending (D-07)
@@ -132,28 +131,56 @@ def _compute_tree_expansion_scores(
         return {nid: 1.0 for nid in leaf_s_v}
     return {nid: (s - min_s) / (max_s - min_s) for nid, s in leaf_s_v.items()}
 
-LLMSELECT_SYSTEM = """You are a document relevance assessor for a retrieval system.
 
-You will receive a user query and a set of document abstractions — each document is represented by its section headings (table-of-contents paths) and summaries from the top levels of its semantic tree.
+LLMSELECT_SYSTEM = (
+    "You are a document relevance assessor for a "
+    "retrieval system.\n\n"
+    "You will receive a user query and a set of document "
+    "abstractions — each document is represented by its "
+    "section headings (table-of-contents paths) and "
+    "summaries from the top levels of its semantic tree."
+    "\n\n"
+    "Your task is to reason about which documents are "
+    "likely to contain information relevant to the query "
+    "based on these high-level abstractions. Consider:\n"
+    "- Whether the document's topic areas overlap with "
+    "the query's intent\n"
+    "- Whether the section structure suggests the document "
+    "covers the query's subject matter\n"
+    "- Partial relevance counts — a document that covers "
+    "part of the query is still relevant\n\n"
+    "Assign a relevance score (0.0 to 1.0) to each "
+    "relevant document. Only return documents with "
+    "meaningful relevance (score > 0.1). Do not invent "
+    "document IDs — only return IDs from the provided list."
+)
 
-Your task is to reason about which documents are likely to contain information relevant to the query based on these high-level abstractions. Consider:
-- Whether the document's topic areas overlap with the query's intent
-- Whether the section structure suggests the document covers the query's subject matter
-- Partial relevance counts — a document that covers part of the query is still relevant
-
-Assign a relevance score (0.0 to 1.0) to each relevant document. Only return documents with meaningful relevance (score > 0.1). Do not invent document IDs — only return IDs from the provided list."""
-
-LLMNAVIGATE_SYSTEM = """You are a hierarchical document navigator for a retrieval system.
-
-You will receive a user query and a tree of document sections, shown with their table-of-contents paths, summaries, and depth levels. The tree represents a document's semantic structure from broad topics (shallow depth) to specific passages (deep depth).
-
-Your task is to navigate this hierarchy and identify the subtree roots most relevant to the query. Selecting a node means "the content under this subtree is relevant." Consider:
-- Start broad: which top-level sections relate to the query?
-- Narrow down: within those, which subsections are most specific to what's being asked?
-- Prefer the most specific relevant node — select a subsection over its parent when the subsection is a better match
-- A node's summary describes all content beneath it in the tree
-
-Assign a relevance score (0.0 to 1.0) to each selected node. Do not invent node IDs — only return IDs from the provided list."""
+LLMNAVIGATE_SYSTEM = (
+    "You are a hierarchical document navigator for a "
+    "retrieval system.\n\n"
+    "You will receive a user query and a tree of document "
+    "sections, shown with their table-of-contents paths, "
+    "summaries, and depth levels. The tree represents a "
+    "document's semantic structure from broad topics "
+    "(shallow depth) to specific passages (deep depth)."
+    "\n\n"
+    "Your task is to navigate this hierarchy and identify "
+    "the subtree roots most relevant to the query. "
+    "Selecting a node means \"the content under this "
+    "subtree is relevant.\" Consider:\n"
+    "- Start broad: which top-level sections relate to "
+    "the query?\n"
+    "- Narrow down: within those, which subsections are "
+    "most specific to what's being asked?\n"
+    "- Prefer the most specific relevant node — select a "
+    "subsection over its parent when the subsection is a "
+    "better match\n"
+    "- A node's summary describes all content beneath it "
+    "in the tree\n\n"
+    "Assign a relevance score (0.0 to 1.0) to each "
+    "selected node. Do not invent node IDs — only return "
+    "IDs from the provided list."
+)
 
 
 class RetrievalService:
@@ -210,9 +237,7 @@ class RetrievalService:
         if doc_response.routing == "node_level" and doc_response.documents:
             # Phase 8 D-14: node_level_retrieval -> node_fusion -> budget_select
             doc_order = [d.document_id for d in doc_response.documents]
-            node_results = self._node_level_retrieval(
-                session, query, query_vector, doc_order
-            )
+            node_results = self._node_level_retrieval(session, query, query_vector, doc_order)
             fusion_ordered = self._node_fusion(node_results, doc_order)
             selected, total_tokens_used, over_budget = self._budget_select(
                 fusion_ordered, token_budget
@@ -237,7 +262,7 @@ class RetrievalService:
                 routing="node_level",
                 total_tokens=doc_response.total_tokens,
                 documents=doc_response.documents,
-                node_results=node_results,       # full pre-budget list (D-12)
+                node_results=node_results,  # full pre-budget list (D-12)
                 chunks=chunks,
                 total_tokens_used=total_tokens_used,
                 over_budget=over_budget,
@@ -375,8 +400,7 @@ class RetrievalService:
         # Filter to only nodes from our fused documents
         doc_id_set = set(document_ids)
         internal_similarities = {
-            node_id: sim for node_id, doc_id, sim in internal_rows
-            if doc_id in doc_id_set
+            node_id: sim for node_id, doc_id, sim in internal_rows if doc_id in doc_id_set
         }
 
         scores = _compute_tree_expansion_scores(all_nodes, leaf_similarities, internal_similarities)
@@ -427,16 +451,18 @@ class RetrievalService:
             node = node_map.get(leaf_id)
             if node is None:
                 continue
-            results.append(NodeResult(
-                node_id=node.id,
-                document_id=node.document_id,
-                content=node.content,
-                token_count=node.token_count,
-                score=score,
-                depth=node.depth,
-                position=node.position,
-                source=source_map[leaf_id],
-            ))
+            results.append(
+                NodeResult(
+                    node_id=node.id,
+                    document_id=node.document_id,
+                    content=node.content,
+                    token_count=node.token_count,
+                    score=score,
+                    depth=node.depth,
+                    position=node.position,
+                    source=source_map[leaf_id],
+                )
+            )
         return results
 
     def _node_fusion(
@@ -488,12 +514,17 @@ class RetrievalService:
                 total_used += chunk_tokens
                 logger.debug(
                     "Budget: included node %s (%d tokens, running total %d/%d)",
-                    node.node_id, chunk_tokens, total_used, token_budget,
+                    node.node_id,
+                    chunk_tokens,
+                    total_used,
+                    token_budget,
                 )
             else:
                 logger.debug(
                     "Budget: skipped node %s (%d tokens would exceed %d)",
-                    node.node_id, chunk_tokens, token_budget,
+                    node.node_id,
+                    chunk_tokens,
+                    token_budget,
                 )
 
         if not selected and fusion_ordered:
@@ -502,7 +533,9 @@ class RetrievalService:
             logger.warning(
                 "Budget: all chunks exceed token_budget=%d; returning best-scored "
                 "chunk (node %s, %d tokens) with over_budget=True",
-                token_budget, best.node_id, best.token_count or 0,
+                token_budget,
+                best.node_id,
+                best.token_count or 0,
             )
             return [best], best.token_count or 0, True
 
@@ -513,13 +546,13 @@ class RetrievalService:
         session: Session,
         query_vector: list[float],
     ) -> dict[uuid.UUID, float]:
-        """Vector top-K retrieval over internal nodes (D-07, D-08).
+        """Vector top-K retrieval over all nodes (FABLE Algorithm 1, line 7).
 
-        Queries HNSW partial index for internal nodes by cosine similarity,
+        Queries all embedded nodes (internal + leaf) by cosine similarity,
         aggregates to document-level by taking max similarity per document.
         Returns dict mapping document_id -> max similarity score.
         """
-        rows = self.node_repo.find_similar_internal_nodes(
+        rows = self.node_repo.find_similar_nodes(
             session, query_vector, settings.retrieval_top_k
         )
         doc_scores: dict[uuid.UUID, float] = {}
@@ -564,9 +597,7 @@ class RetrievalService:
         doc_ids = [doc_id for doc_id, _ in fused]
 
         # Batch-fetch document records
-        result = session.execute(
-            select(Document).where(Document.id.in_(doc_ids))
-        )
+        result = session.execute(select(Document).where(Document.id.in_(doc_ids)))
         doc_map: dict[uuid.UUID, Document] = {d.id: d for d in result.scalars().all()}
 
         # Batch-fetch root node titles
@@ -576,15 +607,11 @@ class RetrievalService:
                 Node.node_type == "root",
             )
         )
-        title_map: dict[uuid.UUID, str | None] = {
-            row.document_id: row.title for row in roots
-        }
+        title_map: dict[uuid.UUID, str | None] = {row.document_id: row.title for row in roots}
 
         # Compute total tokens
         total_tokens = sum(
-            doc_map[doc_id].token_count or 0
-            for doc_id, _ in fused
-            if doc_id in doc_map
+            doc_map[doc_id].token_count or 0 for doc_id, _ in fused if doc_id in doc_map
         )
 
         # Determine routing

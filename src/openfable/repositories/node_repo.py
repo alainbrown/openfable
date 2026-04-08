@@ -91,10 +91,7 @@ class NodeRepository:
         Caller is responsible for flush/commit after this call.
         """
         for node_id, chunk_id in chunk_links:
-            session.execute(
-                update(Chunk).where(Chunk.id == chunk_id).values(node_id=node_id)
-            )
-
+            session.execute(update(Chunk).where(Chunk.id == chunk_id).values(node_id=node_id))
 
     def find_similar_internal_nodes(
         self,
@@ -122,6 +119,30 @@ class NodeRepository:
         )
         return [(row.id, row.document_id, float(row.similarity)) for row in result]
 
+    def find_similar_nodes(
+        self,
+        session: Session,
+        query_vector: list[float],
+        top_k: int,
+    ) -> list[tuple[uuid.UUID, uuid.UUID, float]]:
+        """Top-K nodes (all types) by cosine similarity.
+
+        Searches over all embedded nodes (internal + leaf) per FABLE paper
+        Algorithm 1, line 7. Returns list of (node_id, document_id, similarity_score).
+        """
+        result = session.execute(
+            text("""
+                SELECT id, document_id,
+                       1 - (embedding <=> (:query_vec)::vector) AS similarity
+                FROM nodes
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> (:query_vec)::vector
+                LIMIT :top_k
+            """),
+            {"query_vec": str(query_vector), "top_k": top_k},
+        )
+        return [(row.id, row.document_id, float(row.similarity)) for row in result]
+
     def find_internal_nodes_by_depth(
         self,
         session: Session,
@@ -130,11 +151,9 @@ class NodeRepository:
     ) -> list[Node]:
         """Fetch internal nodes at depth <= max_depth for LLMselect.
 
-        If document_ids is None, fetches across all documents with index_status='complete'.
+        If document_ids is None, fetches across all documents.
         Filters to node_type IN ('root', 'section', 'subsection') -- never leaf nodes.
         """
-        from openfable.models.document import Document
-
         stmt = (
             select(Node)
             .where(Node.depth <= max_depth)
@@ -142,17 +161,9 @@ class NodeRepository:
         )
         if document_ids is not None:
             stmt = stmt.where(Node.document_id.in_(document_ids))
-        else:
-            # Only include nodes from 'complete' documents
-            stmt = stmt.where(
-                Node.document_id.in_(
-                    select(Document.id).where(Document.index_status == "complete")
-                )
-            )
         stmt = stmt.order_by(Node.document_id, Node.depth, Node.position)
         result = session.execute(stmt)
         return list(result.scalars().all())
-
 
     def find_all_nodes_for_documents(
         self,
