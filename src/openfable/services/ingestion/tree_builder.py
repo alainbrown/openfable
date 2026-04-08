@@ -53,30 +53,55 @@ TREE_BUILD_SYSTEM_PROMPT = """\
 Organize numbered chunks into a JSON tree. Every chunk must appear exactly once as a leaf.
 
 Output format: a single JSON object with one key "root" containing the tree.
-- Internal nodes have: "type": "internal", "node_type" (root/section/subsection), "title", "summary", "children" (array)
+- Internal nodes have: "type": "internal", "node_type"
+  (root/section/subsection), "title", "summary", "children" (array)
 - Leaf nodes have: "type": "leaf", "chunk_index" (0-based integer)
+
 - Maximum depth: 4 levels (root > section > subsection > leaf)
 - All chunks must be included. Do not skip any chunk_index.
 
 Example — given chunks 0 (short intro), 1 (topic A), 2 (topic B), output:
 
-{"root": {"type": "internal", "node_type": "root", "title": "Document Title", "summary": "Brief summary of entire document", "children": [{"type": "leaf", "chunk_index": 0}, {"type": "internal", "node_type": "section", "title": "Topic A", "summary": "Summary of topic A", "children": [{"type": "leaf", "chunk_index": 1}]}, {"type": "internal", "node_type": "section", "title": "Topic B", "summary": "Summary of topic B", "children": [{"type": "leaf", "chunk_index": 2}]}]}}
+{"root": {"type": "internal", "node_type": "root",
+"title": "Document Title",
+"summary": "Brief summary of entire document",
+"children": [
+  {"type": "leaf", "chunk_index": 0},
+  {"type": "internal", "node_type": "section",
+   "title": "Topic A", "summary": "Summary of topic A",
+   "children": [{"type": "leaf", "chunk_index": 1}]},
+  {"type": "internal", "node_type": "section",
+   "title": "Topic B", "summary": "Summary of topic B",
+   "children": [{"type": "leaf", "chunk_index": 2}]}
+]}}
 
-Note: even short intro chunks must be leaf nodes. Do not absorb them into summaries.
+Note: even short intro chunks must be leaf nodes.
+Do not absorb them into summaries.
 """
 
 TREE_BUILD_PARTITION_SYSTEM_PROMPT = """\
 Organize numbered chunks into a JSON tree. Every chunk must appear exactly once as a leaf.
 
 Output format: a single JSON object with one key "root" containing the tree.
-- Internal nodes have: "type": "internal", "node_type" (root/section), "title", "summary", "children" (array)
+- Internal nodes have: "type": "internal", "node_type"
+  (root/section), "title", "summary", "children" (array)
 - Leaf nodes have: "type": "leaf", "chunk_index" (0-based integer)
 - Maximum depth: 3 levels (root > section > leaf). Do not use subsection.
 - All chunks must be included. Do not skip any chunk_index.
 
 Example — given chunks 0 (short intro), 1 (topic A), 2 (topic B), output:
 
-{"root": {"type": "internal", "node_type": "root", "title": "Partition Title", "summary": "Brief summary", "children": [{"type": "leaf", "chunk_index": 0}, {"type": "internal", "node_type": "section", "title": "Topic A", "summary": "Summary of topic A", "children": [{"type": "leaf", "chunk_index": 1}]}, {"type": "internal", "node_type": "section", "title": "Topic B", "summary": "Summary of topic B", "children": [{"type": "leaf", "chunk_index": 2}]}]}}
+{"root": {"type": "internal", "node_type": "root",
+"title": "Partition Title", "summary": "Brief summary",
+"children": [
+  {"type": "leaf", "chunk_index": 0},
+  {"type": "internal", "node_type": "section",
+   "title": "Topic A", "summary": "Summary of topic A",
+   "children": [{"type": "leaf", "chunk_index": 1}]},
+  {"type": "internal", "node_type": "section",
+   "title": "Topic B", "summary": "Summary of topic B",
+   "children": [{"type": "leaf", "chunk_index": 2}]}
+]}}
 
 Note: even short intro chunks must be leaf nodes. Do not absorb them into summaries.
 """
@@ -90,7 +115,8 @@ Output format: a JSON object with "merged_title" (string) and "merged_summary" (
 
 Example:
 
-{"merged_title": "Complete Document", "merged_summary": "Covers topics A, B, and C across all parts."}
+{"merged_title": "Complete Document",
+"merged_summary": "Covers topics A, B, and C across all parts."}
 """
 
 # ---------------------------------------------------------------------------
@@ -150,9 +176,7 @@ def _build_toc_path(ancestor_titles: list[str], current_title: str) -> str:
     return ".".join(parts)
 
 
-def _flatten_excess_depth(
-    nodes: list[NodeInsert], max_depth: int = _MAX_DEPTH
-) -> list[NodeInsert]:
+def _flatten_excess_depth(nodes: list[NodeInsert], max_depth: int = _MAX_DEPTH) -> list[NodeInsert]:
     """Re-parent children of nodes that exceed max_depth, then recompute depths (D-07).
 
     Nodes at depth > max_depth are removed from the list and their children are
@@ -197,9 +221,7 @@ def _flatten_excess_depth(
         node.depth = depth
         if node.node_type == "leaf":
             # Leaf path uses chunk index label; preserve the last component
-            leaf_label = _sanitize_ltree_label(
-                node.path.split(".")[-1] if node.path else "chunk"
-            )
+            leaf_label = _sanitize_ltree_label(node.path.split(".")[-1] if node.path else "chunk")
             node.path = _build_toc_path(ancestor_titles, leaf_label)
             # toc_path stays None for leaves
         else:
@@ -260,9 +282,7 @@ def _validate_chunk_coverage(root: LLMInternalNode, num_chunks: int) -> None:
         )
 
 
-def _llm_tree_to_node_inserts(
-    root: LLMInternalNode, chunks: list["Chunk"]
-) -> list[NodeInsert]:
+def _llm_tree_to_node_inserts(root: LLMInternalNode, chunks: list["Chunk"]) -> list[NodeInsert]:
     """Recursively convert an LLMInternalNode tree into a flat list of NodeInsert objects.
 
     Traverses in DFS order (parent before children). Computes toc_path and path from
@@ -394,10 +414,12 @@ class TreeBuilder:
 
     def _single_pass_build(self, chunks: list["Chunk"]) -> list[NodeInsert]:
         """Build the tree in a single LLM call (D-01: fits within content budget)."""
-        chunk_text = "\n\n".join(
-            f"Chunk {i}:\n{chunk.content}" for i, chunk in enumerate(chunks)
+        chunk_text = "\n\n".join(f"Chunk {i}:\n{chunk.content}" for i, chunk in enumerate(chunks))
+        user_msg = (
+            f"There are {len(chunks)} chunks (indexes 0 to "
+            f"{len(chunks) - 1}). Every index must appear "
+            f"exactly once as a leaf.\n\n{chunk_text}"
         )
-        user_msg = f"There are {len(chunks)} chunks (indexes 0 to {len(chunks) - 1}). Every index must appear exactly once as a leaf.\n\n{chunk_text}"
         messages = [
             {"role": "system", "content": TREE_BUILD_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
@@ -419,9 +441,7 @@ class TreeBuilder:
         _validate_chunk_coverage(response.root, len(chunks))
         return _llm_tree_to_node_inserts(response.root, chunks)
 
-    def _progressive_build(
-        self, chunks: list["Chunk"], content_budget: int
-    ) -> list[NodeInsert]:
+    def _progressive_build(self, chunks: list["Chunk"], content_budget: int) -> list[NodeInsert]:
         """Build tree progressively: partition chunks, build each, then merge (D-03, D-04)."""
         # Partition chunks into sequential groups bounded by content_budget
         partitions: list[list["Chunk"]] = []
@@ -460,14 +480,14 @@ class TreeBuilder:
 
         return self._merge_trees(summaries, all_partition_nodes)
 
-    def _build_partition(
-        self, chunks: list["Chunk"]
-    ) -> tuple[LLMInternalNode, list[NodeInsert]]:
+    def _build_partition(self, chunks: list["Chunk"]) -> tuple[LLMInternalNode, list[NodeInsert]]:
         """Build a depth-constrained tree (max 3 levels) for a single partition (D-03)."""
-        chunk_text = "\n\n".join(
-            f"Chunk {i}:\n{chunk.content}" for i, chunk in enumerate(chunks)
+        chunk_text = "\n\n".join(f"Chunk {i}:\n{chunk.content}" for i, chunk in enumerate(chunks))
+        user_msg = (
+            f"There are {len(chunks)} chunks (indexes 0 to "
+            f"{len(chunks) - 1}). Every index must appear "
+            f"exactly once as a leaf.\n\n{chunk_text}"
         )
-        user_msg = f"There are {len(chunks)} chunks (indexes 0 to {len(chunks) - 1}). Every index must appear exactly once as a leaf.\n\n{chunk_text}"
         messages = [
             {"role": "system", "content": TREE_BUILD_PARTITION_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
@@ -484,9 +504,7 @@ class TreeBuilder:
                 f"LLM partition tree construction failed after retries: {exc}"
             ) from exc
         except Exception as exc:
-            raise TreeConstructionError(
-                f"LLM partition tree construction failed: {exc}"
-            ) from exc
+            raise TreeConstructionError(f"LLM partition tree construction failed: {exc}") from exc
 
         _validate_chunk_coverage(response.root, len(chunks))
         node_inserts = _llm_tree_to_node_inserts(response.root, chunks)
@@ -520,9 +538,7 @@ class TreeBuilder:
                 temperature=0,
             )
         except InstructorRetryException as exc:
-            raise TreeConstructionError(
-                f"LLM tree merge failed after retries: {exc}"
-            ) from exc
+            raise TreeConstructionError(f"LLM tree merge failed after retries: {exc}") from exc
         except Exception as exc:
             raise TreeConstructionError(f"LLM tree merge failed: {exc}") from exc
 

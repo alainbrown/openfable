@@ -16,8 +16,6 @@ from openfable.schemas.document import (
     DocumentListItem,
     DocumentListResponse,
     DocumentStatusResponse,
-    JobStatusEnum,
-    JobStatusResponse,
 )
 from openfable.services.ingestion.pipeline import (
     IngestionPipeline,
@@ -44,7 +42,7 @@ def create_document(
 
     existing = repo.get_by_content_hash(session, content_hash)
     if existing:
-        job = repo.reset_document_for_reingest(
+        repo.reset_document_for_reingest(
             session,
             existing.id,
             body.text,
@@ -53,7 +51,7 @@ def create_document(
         )
         doc_id = existing.id
     else:
-        doc, job = repo.create_with_job(
+        doc = repo.create(
             session,
             body.text,
             content_hash,
@@ -62,12 +60,10 @@ def create_document(
         doc_id = doc.id
 
     session.commit()
-    pipeline.run(session, doc_id, job.id)
+    pipeline.run(session, doc_id)
 
     return DocumentIngestResponse(
         document_id=doc_id,
-        job_id=job.id,
-        status=JobStatusEnum.complete,
         content_hash=content_hash,
     )
 
@@ -77,7 +73,7 @@ def list_documents(
     session: Session = Depends(get_session),
     repo: DocumentRepository = Depends(get_document_repo),
 ) -> DocumentListResponse:
-    """List all documents with their index status.
+    """List all documents.
 
     Content is never included in list responses (D-06: use GET /documents/{id}?include=content).
     """
@@ -86,7 +82,6 @@ def list_documents(
         DocumentListItem(
             document_id=doc.id,
             content_hash=doc.content_hash,
-            index_status=doc.index_status,
             token_count=doc.token_count,
             created_at=doc.created_at,
         )
@@ -102,7 +97,7 @@ def get_document(
     session: Session = Depends(get_session),
     repo: DocumentRepository = Depends(get_document_repo),
 ) -> DocumentStatusResponse:
-    """Get document details with latest job status.
+    """Get document details.
 
     Returns document content by default. Use ?meta_only=true for a lightweight
     response without the raw text.
@@ -111,28 +106,13 @@ def get_document(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
 
-    latest_job = repo.get_latest_job(session, document_id)
-    job_response = None
-    if latest_job is not None:
-        job_response = JobStatusResponse(
-            job_id=latest_job.id,
-            status=JobStatusEnum(latest_job.status),
-            error_detail=latest_job.error_detail,
-            created_at=latest_job.created_at,
-            updated_at=latest_job.updated_at,
-        )
-
     return DocumentStatusResponse(
         document_id=doc.id,
         content_hash=doc.content_hash,
-        index_status=doc.index_status,
         llm_model=doc.llm_model,
         token_count=doc.token_count,
         schema_version=doc.schema_version,
         created_at=doc.created_at,
         updated_at=doc.updated_at,
-        latest_job=job_response,
         content=None if meta_only else doc.content,
     )
-
-

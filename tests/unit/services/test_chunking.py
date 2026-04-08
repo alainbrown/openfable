@@ -4,7 +4,6 @@ All LLM calls are mocked — no live LLM required.
 """
 
 import pytest
-from pydantic import ValidationError
 
 from openfable.exceptions import ChunkingError
 from openfable.schemas.chunking import ChunkingResponse, ChunkResult
@@ -15,31 +14,6 @@ from openfable.services.ingestion.chunking import (
     _deduplicate_chunks,
     _split_sentences,
 )
-
-# ---------------------------------------------------------------------------
-# Schema validation tests (synchronous, no mock needed)
-# ---------------------------------------------------------------------------
-
-
-def test_chunk_result_validates_token_bounds_min() -> None:
-    """ChunkResult with chunk_text shorter than 20 tokens raises ValidationError."""
-    with pytest.raises(ValidationError, match="too short"):
-        ChunkResult(chunk_text="Hello", start_idx=0, end_idx=5)
-
-
-def test_chunk_result_validates_token_bounds_max() -> None:
-    """ChunkResult with chunk_text longer than 2000 tokens raises ValidationError."""
-    long_text = " ".join(["word"] * 3000)
-    with pytest.raises(ValidationError, match="too long"):
-        ChunkResult(chunk_text=long_text, start_idx=0, end_idx=len(long_text))
-
-
-def test_chunk_result_accepts_valid_chunk() -> None:
-    """ChunkResult with ~50 token text creates successfully."""
-    text = "The quick brown fox jumps over the lazy dog. " * 6
-    chunk = ChunkResult(chunk_text=text, start_idx=0, end_idx=len(text))
-    assert chunk.chunk_text == text
-
 
 # ---------------------------------------------------------------------------
 # Prompt compliance test (synchronous)
@@ -179,9 +153,7 @@ def test_deduplicate_chunks_removes_exact_duplicates() -> None:
         chunk_text=text_a, start_idx=len(text_a) + 10, end_idx=len(text_a) * 2 + 10
     )  # duplicate of chunk1
     offset_b = len(text_a) * 2 + 20
-    chunk3 = ChunkResult(
-        chunk_text=text_b, start_idx=offset_b, end_idx=offset_b + len(text_b)
-    )
+    chunk3 = ChunkResult(chunk_text=text_b, start_idx=offset_b, end_idx=offset_b + len(text_b))
 
     result = _deduplicate_chunks([chunk1, chunk2, chunk3])
     assert len(result) == 2

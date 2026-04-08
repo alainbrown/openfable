@@ -132,9 +132,8 @@ MOCK_CHUNKS_LONG: list[dict] = [
             "context window of preceding tokens."
         ),
         "start_idx": GOLDEN_DOC_LONG.index("Language models are probabilistic"),
-        "end_idx": GOLDEN_DOC_LONG.index("context window of preceding tokens.") + len(
-            "context window of preceding tokens."
-        ),
+        "end_idx": GOLDEN_DOC_LONG.index("context window of preceding tokens.")
+        + len("context window of preceding tokens."),
     },
     {
         "chunk_text": (
@@ -146,9 +145,8 @@ MOCK_CHUNKS_LONG: list[dict] = [
             "used by the attention layers."
         ),
         "start_idx": GOLDEN_DOC_LONG.index("The transformer architecture"),
-        "end_idx": GOLDEN_DOC_LONG.index("used by the attention layers.") + len(
-            "used by the attention layers."
-        ),
+        "end_idx": GOLDEN_DOC_LONG.index("used by the attention layers.")
+        + len("used by the attention layers."),
     },
     {
         "chunk_text": (
@@ -215,7 +213,11 @@ MOCK_TREE_LONG: list[dict] = [
         "depth": 0,
         "position": 0,
         "title": "Language Models, Transformers, and Information Retrieval",
-        "summary": "Introduction to language models, transformer architecture, and their applications in information retrieval",
+        "summary": (
+            "Introduction to language models, transformer"
+            " architecture, and their applications in"
+            " information retrieval"
+        ),
         "children": [
             {
                 "node_type": "leaf",
@@ -288,7 +290,7 @@ def make_relevant_vector(similarity: float = 0.95) -> list[float]:
     """
     v = [0.0] * EMBEDDING_DIM
     v[0] = similarity
-    complement = math.sqrt(max(0.0, 1.0 - similarity ** 2))
+    complement = math.sqrt(max(0.0, 1.0 - similarity**2))
     v[1] = complement
     # Vector is unit-length by construction: v[0]^2 + v[1]^2 = sim^2 + (1-sim^2) = 1
     # Normalize for numerical robustness
@@ -329,5 +331,5 @@ CHUNK_VECTORS_LONG: list[list[float]] = [
     make_irrelevant_vector(),
 ]
 
-# Internal (root) nodes do not affect leaf retrieval path in bi-path retrieval
+# Default root vector for documents
 ROOT_VECTOR: list[float] = make_irrelevant_vector()

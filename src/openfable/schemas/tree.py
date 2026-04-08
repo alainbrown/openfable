@@ -47,18 +47,14 @@ class LLMInternalNode(BaseModel):
     @classmethod
     def validate_title(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError(
-                "title must not be empty -- provide a descriptive topic title."
-            )
+            raise ValueError("title must not be empty -- provide a descriptive topic title.")
         return v
 
     @field_validator("summary", mode="after")
     @classmethod
     def validate_summary(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError(
-                "summary must not be empty -- provide a concise abstractive summary."
-            )
+            raise ValueError("summary must not be empty -- provide a concise abstractive summary.")
         return v
 
 

@@ -107,11 +107,10 @@ class EmbeddingService:
                     f"HTTP {exc.response.status_code} - {exc.response.text[:200]}"
                 ) from exc
             except httpx.ConnectError as exc:
-                raise EmbeddingError(
-                    f"TEI unreachable at {self.embedding_url}: {exc}"
-                ) from exc
+                raise EmbeddingError(f"TEI unreachable at {self.embedding_url}: {exc}") from exc
             results.extend(zip([nid for nid, _ in batch], vectors))
         return results
+
 
 def get_embedding_service() -> EmbeddingService:
     return EmbeddingService()

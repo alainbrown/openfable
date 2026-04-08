@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from openfable.config import settings
-from openfable.exceptions import ChunkingError, EmbeddingError, TreeConstructionError
+from openfable.exceptions import ChunkingError
 from openfable.models.chunk import Chunk as ChunkModel
 from openfable.models.node import Node
 from openfable.repositories.chunk_repo import ChunkRepository
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class IngestionPipeline:
-    def run(self, session: Session, document_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    def run(self, session: Session, document_id: uuid.UUID) -> None:
         """Run the full ingestion pipeline synchronously."""
         repo = DocumentRepository()
         llm = LLMService()
@@ -28,23 +28,15 @@ class IngestionPipeline:
         chunk_repo = ChunkRepository()
 
         # --- Stage: chunking ---
-        repo.update_job_status(session, job_id, "chunking")
-        session.commit()
-
         doc = repo.get_by_id(session, document_id)
         if doc is None or doc.content is None:
-            raise ChunkingError(
-                f"Document {document_id} not found or has no content"
-            )
+            raise ChunkingError(f"Document {document_id} not found or has no content")
 
         chunks = chunking_svc.segment(doc.content)
         chunk_repo.insert_chunks(session, document_id, chunks)
         session.commit()
 
         # --- Stage: tree_building ---
-        repo.update_job_status(session, job_id, "tree_building")
-        session.commit()
-
         chunk_result = session.execute(
             select(ChunkModel)
             .where(ChunkModel.document_id == document_id)
@@ -56,9 +48,7 @@ class IngestionPipeline:
         node_inserts = tree_builder.build(db_chunks)
 
         node_repo = NodeRepository()
-        inserted_nodes = node_repo.insert_tree(
-            session, document_id, node_inserts
-        )
+        inserted_nodes = node_repo.insert_tree(session, document_id, node_inserts)
 
         chunk_links = [
             (ni.id, ni.chunk_id)
@@ -69,13 +59,8 @@ class IngestionPipeline:
         session.commit()
 
         # --- Stage: embedding ---
-        repo.update_job_status(session, job_id, "embedding")
-        session.commit()
-
         node_result = session.execute(
-            select(Node)
-            .where(Node.document_id == document_id)
-            .order_by(Node.depth, Node.position)
+            select(Node).where(Node.document_id == document_id).order_by(Node.depth, Node.position)
         )
         all_nodes = list(node_result.scalars().all())
 
@@ -91,17 +76,9 @@ class IngestionPipeline:
         )
 
         for node_id, vector in node_embeddings:
-            session.execute(
-                update(Node)
-                .where(Node.id == node_id)
-                .values(embedding=vector)
-            )
+            session.execute(update(Node).where(Node.id == node_id).values(embedding=vector))
         session.commit()
 
-        # --- Complete ---
-        repo.update_job_status(session, job_id, "complete")
-        repo.update_document_status(session, document_id, "complete")
-        session.commit()
         logger.info(
             "Ingestion complete for document %s (%d chunks, %d nodes, %d embeddings)",
             document_id,

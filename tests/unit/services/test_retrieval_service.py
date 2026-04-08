@@ -6,7 +6,8 @@ Covers RET-01 through RET-06:
   RET-02: LLMselect structured output call + failure resilience + vector top-K aggregation
   RET-03: max-score bi-path fusion (union + max + sorted descending)
   RET-04: budget-adaptive routing (document_level with content, node_level without)
-  RET-05: LLMnavigate structured output call + failure resilience + hallucination filter + subtree expansion
+  RET-05: LLMnavigate structured output call + failure resilience
+         + hallucination filter + subtree expansion
   RET-06: TreeExpansion scoring formula (S_sim, S_inh, S_child, normalization)
 """
 
@@ -50,6 +51,7 @@ def mock_embed():
 def mock_node_repo():
     """Mock NodeRepository with empty returns by default."""
     repo = MagicMock()
+    repo.find_similar_nodes = MagicMock(return_value=[])
     repo.find_similar_internal_nodes = MagicMock(return_value=[])
     repo.find_internal_nodes_by_depth = MagicMock(return_value=[])
     return repo
@@ -95,11 +97,12 @@ def _make_document(doc_id: uuid.UUID, token_count: int = 100, content: str = "te
     doc.id = doc_id
     doc.token_count = token_count
     doc.content = content
-    doc.index_status = "complete"
     return doc
 
 
-def _make_node(doc_id: uuid.UUID, node_type: str = "section", summary: str = "Summary") -> MagicMock:
+def _make_node(
+    doc_id: uuid.UUID, node_type: str = "section", summary: str = "Summary"
+) -> MagicMock:
     """Create a Node-like mock for testing."""
     node = MagicMock(spec=Node)
     node.id = uuid.uuid4()
@@ -195,9 +198,7 @@ def test_fuse_sorted_descending(service) -> None:
     result = service._fuse(llm_scores, vector_scores)
 
     scores = [score for _, score in result]
-    assert scores == sorted(scores, reverse=True), (
-        f"Expected descending order, got: {scores}"
-    )
+    assert scores == sorted(scores, reverse=True), f"Expected descending order, got: {scores}"
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +271,8 @@ def test_routing_node_level(service, mock_session) -> None:
 
 
 def test_empty_corpus(service, mock_session) -> None:
-    """query() with empty corpus returns QueryResponse with empty documents and node_level routing."""
+    """query() with empty corpus returns QueryResponse with empty documents
+    and node_level routing."""
     # Both retrieval paths return empty results
     result = service.query(mock_session, "test query", 500)
 
@@ -296,9 +298,7 @@ def test_llmselect_calls_llm(service, mock_llm, mock_node_repo, mock_session) ->
 
     # LLM returns doc_a as selected
     mock_llm.complete_structured.return_value = LLMSelectResult(
-        selected_documents=[
-            DocumentSelection(document_id=doc_a_id, relevance_score=0.9)
-        ]
+        selected_documents=[DocumentSelection(document_id=doc_a_id, relevance_score=0.9)]
     )
 
     result = service._llmselect(mock_session, "test query")
@@ -315,9 +315,7 @@ def test_llmselect_calls_llm(service, mock_llm, mock_node_repo, mock_session) ->
     assert result[doc_a_id] == pytest.approx(0.9)
 
 
-def test_llmselect_failure_returns_empty(
-    service, mock_llm, mock_node_repo, mock_session
-) -> None:
+def test_llmselect_failure_returns_empty(service, mock_llm, mock_node_repo, mock_session) -> None:
     """_llmselect returns {} when LLM raises exception (vector path acts as fallback)."""
     doc_id = uuid.uuid4()
     node = _make_node(doc_id, summary="Some section summary")
@@ -335,9 +333,7 @@ def test_llmselect_failure_returns_empty(
 # ---------------------------------------------------------------------------
 
 
-def test_vector_topk_aggregates_by_document(
-    service, mock_node_repo, mock_session
-) -> None:
+def test_vector_topk_aggregates_by_document(service, mock_node_repo, mock_session) -> None:
     """_vector_topk aggregates node similarities to document-level max scores."""
     doc_a = uuid.uuid4()
     doc_b = uuid.uuid4()
@@ -347,7 +343,7 @@ def test_vector_topk_aggregates_by_document(
     node_b_id = uuid.uuid4()
 
     # Two nodes from doc_a (similarities 0.8 and 0.6), one from doc_b (similarity 0.5)
-    mock_node_repo.find_similar_internal_nodes = MagicMock(
+    mock_node_repo.find_similar_nodes = MagicMock(
         return_value=[
             (node_a1_id, doc_a, 0.8),
             (node_a2_id, doc_a, 0.6),
@@ -436,8 +432,26 @@ def test_tree_expansion_rank_d1() -> None:
     leaf_low_id = uuid.uuid4()
 
     root = _make_tree_node(root_id, doc_id, "root", depth=0, position=0)
-    leaf_high = _make_tree_node(leaf_high_id, doc_id, "leaf", depth=1, position=0, parent_id=root_id, content="high", token_count=10)
-    leaf_low = _make_tree_node(leaf_low_id, doc_id, "leaf", depth=1, position=1, parent_id=root_id, content="low", token_count=10)
+    leaf_high = _make_tree_node(
+        leaf_high_id,
+        doc_id,
+        "leaf",
+        depth=1,
+        position=0,
+        parent_id=root_id,
+        content="high",
+        token_count=10,
+    )
+    leaf_low = _make_tree_node(
+        leaf_low_id,
+        doc_id,
+        "leaf",
+        depth=1,
+        position=1,
+        parent_id=root_id,
+        content="low",
+        token_count=10,
+    )
 
     nodes = [root, leaf_high, leaf_low]
     leaf_sims = {leaf_high_id: 0.9, leaf_low_id: 0.3}
@@ -463,10 +477,32 @@ def test_tree_expansion_rank_d4() -> None:
     # root(0) -> section(1) -> subsection(2) -> 2 leaves(3)
     # Using depth 0,1,2,3 to simulate D=4 style tree (0-indexed depths)
     root = _make_tree_node(root_id, doc_id, "root", depth=0, position=0)
-    sec = _make_tree_node(sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="Section")
-    subsec = _make_tree_node(subsec_id, doc_id, "subsection", depth=2, position=0, parent_id=sec_id, summary="Subsection")
-    leaf_high = _make_tree_node(leaf_high_id, doc_id, "leaf", depth=3, position=0, parent_id=subsec_id, content="high", token_count=10)
-    leaf_low = _make_tree_node(leaf_low_id, doc_id, "leaf", depth=3, position=1, parent_id=subsec_id, content="low", token_count=10)
+    sec = _make_tree_node(
+        sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="Section"
+    )
+    subsec = _make_tree_node(
+        subsec_id, doc_id, "subsection", depth=2, position=0, parent_id=sec_id, summary="Subsection"
+    )
+    leaf_high = _make_tree_node(
+        leaf_high_id,
+        doc_id,
+        "leaf",
+        depth=3,
+        position=0,
+        parent_id=subsec_id,
+        content="high",
+        token_count=10,
+    )
+    leaf_low = _make_tree_node(
+        leaf_low_id,
+        doc_id,
+        "leaf",
+        depth=3,
+        position=1,
+        parent_id=subsec_id,
+        content="low",
+        token_count=10,
+    )
 
     nodes = [root, sec, subsec, leaf_high, leaf_low]
     leaf_sims = {leaf_high_id: 0.9, leaf_low_id: 0.3}
@@ -487,16 +523,48 @@ def test_tree_expansion_rank_d6() -> None:
     # Chain: root(0)->d1->d2->d3->d4->d5->2 leaves(6)
     nodes = [
         _make_tree_node(ids[0], doc_id, "root", depth=0, position=0),
-        _make_tree_node(ids[1], doc_id, "section", depth=1, position=0, parent_id=ids[0], summary="d1"),
-        _make_tree_node(ids[2], doc_id, "subsection", depth=2, position=0, parent_id=ids[1], summary="d2"),
-        _make_tree_node(ids[3], doc_id, "subsection", depth=3, position=0, parent_id=ids[2], summary="d3"),
-        _make_tree_node(ids[4], doc_id, "subsection", depth=4, position=0, parent_id=ids[3], summary="d4"),
-        _make_tree_node(ids[5], doc_id, "subsection", depth=5, position=0, parent_id=ids[4], summary="d5"),
+        _make_tree_node(
+            ids[1], doc_id, "section", depth=1, position=0, parent_id=ids[0], summary="d1"
+        ),
+        _make_tree_node(
+            ids[2], doc_id, "subsection", depth=2, position=0, parent_id=ids[1], summary="d2"
+        ),
+        _make_tree_node(
+            ids[3], doc_id, "subsection", depth=3, position=0, parent_id=ids[2], summary="d3"
+        ),
+        _make_tree_node(
+            ids[4], doc_id, "subsection", depth=4, position=0, parent_id=ids[3], summary="d4"
+        ),
+        _make_tree_node(
+            ids[5], doc_id, "subsection", depth=5, position=0, parent_id=ids[4], summary="d5"
+        ),
     ]
     leaf_high_id = uuid.uuid4()
     leaf_low_id = uuid.uuid4()
-    nodes.append(_make_tree_node(leaf_high_id, doc_id, "leaf", depth=6, position=0, parent_id=ids[5], content="high", token_count=10))
-    nodes.append(_make_tree_node(leaf_low_id, doc_id, "leaf", depth=6, position=1, parent_id=ids[5], content="low", token_count=10))
+    nodes.append(
+        _make_tree_node(
+            leaf_high_id,
+            doc_id,
+            "leaf",
+            depth=6,
+            position=0,
+            parent_id=ids[5],
+            content="high",
+            token_count=10,
+        )
+    )
+    nodes.append(
+        _make_tree_node(
+            leaf_low_id,
+            doc_id,
+            "leaf",
+            depth=6,
+            position=1,
+            parent_id=ids[5],
+            content="low",
+            token_count=10,
+        )
+    )
 
     leaf_sims = {leaf_high_id: 0.9, leaf_low_id: 0.3}
     internal_sims = {ids[i]: 0.5 for i in range(1, 6)}
@@ -518,8 +586,26 @@ def test_tree_expansion_equal_scores() -> None:
 
     nodes = [
         _make_tree_node(root_id, doc_id, "root", depth=0, position=0),
-        _make_tree_node(leaf_a, doc_id, "leaf", depth=1, position=0, parent_id=root_id, content="a", token_count=5),
-        _make_tree_node(leaf_b, doc_id, "leaf", depth=1, position=1, parent_id=root_id, content="b", token_count=5),
+        _make_tree_node(
+            leaf_a,
+            doc_id,
+            "leaf",
+            depth=1,
+            position=0,
+            parent_id=root_id,
+            content="a",
+            token_count=5,
+        ),
+        _make_tree_node(
+            leaf_b,
+            doc_id,
+            "leaf",
+            depth=1,
+            position=1,
+            parent_id=root_id,
+            content="b",
+            token_count=5,
+        ),
     ]
     # Equal similarities
     leaf_sims = {leaf_a: 0.5, leaf_b: 0.5}
@@ -545,8 +631,19 @@ def test_s_inh_propagation() -> None:
 
     nodes = [
         _make_tree_node(root_id, doc_id, "root", depth=0, position=0),
-        _make_tree_node(sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="sec"),
-        _make_tree_node(leaf_id, doc_id, "leaf", depth=2, position=0, parent_id=sec_id, content="leaf", token_count=5),
+        _make_tree_node(
+            sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="sec"
+        ),
+        _make_tree_node(
+            leaf_id,
+            doc_id,
+            "leaf",
+            depth=2,
+            position=0,
+            parent_id=sec_id,
+            content="leaf",
+            token_count=5,
+        ),
     ]
     # High similarity on root (internal) -> S_inh should propagate to leaf
     internal_sims = {root_id: 0.8, sec_id: 0.2}  # root is very relevant
@@ -557,7 +654,9 @@ def test_s_inh_propagation() -> None:
     # The leaf should still get a non-zero score thanks to S_inh from root
     # S_sim(root) = 0.8/max(0,1) = 0.8
     # S_inh(sec) = max(0, 0.8) = 0.8 (inherits root's S_sim)
-    # S_inh(leaf) = max(0.8, 0.2/1) = 0.8 (inherits from section: max of sec's S_inh=0.8 and sec's S_sim=0.2/1=0.2)
+    # S_inh(leaf) = max(0.8, 0.2/1) = 0.8
+    # (inherits from section: max of sec's S_inh=0.8
+    # and sec's S_sim=0.2/1=0.2)
     # The leaf gets boosted by ancestor relevance
     assert leaf_id in scores
     # With only one leaf, normalized to 1.0
@@ -565,7 +664,8 @@ def test_s_inh_propagation() -> None:
 
 
 def test_s_child_aggregation_3_level() -> None:
-    """S_child on intermediate internal node: 3-level tree verifies aggregation on non-root internal node.
+    """S_child on intermediate internal node: 3-level tree verifies
+    aggregation on non-root internal node.
 
     Tree structure:
         root(0) -> section(1) -> 2 leaves(2)
@@ -582,9 +682,15 @@ def test_s_child_aggregation_3_level() -> None:
     leaf_b = uuid.uuid4()
 
     root = _make_tree_node(root_id, doc_id, "root", depth=0, position=0)
-    sec = _make_tree_node(sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="sec")
-    leaf_node_a = _make_tree_node(leaf_a, doc_id, "leaf", depth=2, position=0, parent_id=sec_id, content="a", token_count=5)
-    leaf_node_b = _make_tree_node(leaf_b, doc_id, "leaf", depth=2, position=1, parent_id=sec_id, content="b", token_count=5)
+    sec = _make_tree_node(
+        sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="sec"
+    )
+    leaf_node_a = _make_tree_node(
+        leaf_a, doc_id, "leaf", depth=2, position=0, parent_id=sec_id, content="a", token_count=5
+    )
+    leaf_node_b = _make_tree_node(
+        leaf_b, doc_id, "leaf", depth=2, position=1, parent_id=sec_id, content="b", token_count=5
+    )
 
     nodes = [root, sec, leaf_node_a, leaf_node_b]
     # Provide internal similarity on section to make S_child observable
@@ -646,10 +752,18 @@ def test_expand_llmnav_to_leaves() -> None:
     # root -> section -> leaf_a, leaf_b
     # root -> leaf_c (direct child of root, not under section)
     root = _make_tree_node(root_id, doc_id, "root", depth=0, position=0)
-    sec = _make_tree_node(sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="sec")
-    node_a = _make_tree_node(leaf_a, doc_id, "leaf", depth=2, position=0, parent_id=sec_id, content="a", token_count=5)
-    node_b = _make_tree_node(leaf_b, doc_id, "leaf", depth=2, position=1, parent_id=sec_id, content="b", token_count=5)
-    node_c = _make_tree_node(leaf_c, doc_id, "leaf", depth=1, position=1, parent_id=root_id, content="c", token_count=5)
+    sec = _make_tree_node(
+        sec_id, doc_id, "section", depth=1, position=0, parent_id=root_id, summary="sec"
+    )
+    node_a = _make_tree_node(
+        leaf_a, doc_id, "leaf", depth=2, position=0, parent_id=sec_id, content="a", token_count=5
+    )
+    node_b = _make_tree_node(
+        leaf_b, doc_id, "leaf", depth=2, position=1, parent_id=sec_id, content="b", token_count=5
+    )
+    node_c = _make_tree_node(
+        leaf_c, doc_id, "leaf", depth=1, position=1, parent_id=root_id, content="c", token_count=5
+    )
 
     all_nodes = [root, sec, node_a, node_b, node_c]
 
@@ -678,8 +792,11 @@ def test_expand_llmnav_to_leaves_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_query_node_level_returns_node_results(service, mock_llm, mock_embed, mock_node_repo, mock_session) -> None:
-    """query() with node_level routing calls _llmnavigate + _tree_expansion and returns NodeResult list."""
+def test_query_node_level_returns_node_results(
+    service, mock_llm, mock_embed, mock_node_repo, mock_session
+) -> None:
+    """query() with node_level routing calls _llmnavigate + _tree_expansion
+    and returns NodeResult list."""
     doc_id = uuid.uuid4()
     root_id = uuid.uuid4()
     leaf_id = uuid.uuid4()
@@ -692,7 +809,7 @@ def test_query_node_level_returns_node_results(service, mock_llm, mock_embed, mo
     )
 
     # Setup: vector top-K returns same document
-    mock_node_repo.find_similar_internal_nodes = MagicMock(
+    mock_node_repo.find_similar_nodes = MagicMock(
         return_value=[(uuid.uuid4(), doc_id, 0.8)]
     )
 
@@ -705,26 +822,36 @@ def test_query_node_level_returns_node_results(service, mock_llm, mock_embed, mo
 
     # Setup: node-level retrieval -- find_all_nodes and find_leaf_similarities
     root_node = _make_tree_node(root_id, doc_id, "root", depth=0, position=0)
-    leaf_node = _make_tree_node(leaf_id, doc_id, "leaf", depth=1, position=0, parent_id=root_id, content="leaf content", token_count=50)
+    leaf_node = _make_tree_node(
+        leaf_id,
+        doc_id,
+        "leaf",
+        depth=1,
+        position=0,
+        parent_id=root_id,
+        content="leaf content",
+        token_count=50,
+    )
 
     # Configure mock_session for multiple execute calls
     # Call 1: Documents query (_route)
     # Call 2: Root titles query (_route)
     mock_session.execute = MagicMock(side_effect=[doc_result, root_result])
 
-    # find_all_nodes returns root + leaf (called once -- _tree_expansion returns it, _node_level_retrieval reuses)
+    # find_all_nodes returns root + leaf (called once --
+    # _tree_expansion returns it, _node_level_retrieval reuses)
     mock_node_repo.find_all_nodes_for_documents = MagicMock(return_value=[root_node, leaf_node])
 
     # find_leaf_similarities returns leaf with similarity
-    mock_node_repo.find_leaf_similarities_for_documents = MagicMock(
-        return_value=[(leaf_id, 0.7)]
-    )
+    mock_node_repo.find_leaf_similarities_for_documents = MagicMock(return_value=[(leaf_id, 0.7)])
 
     # LLMnavigate returns the section node (already configured above)
     # Override to return LLMNavigateResult for the second call to complete_structured
     mock_llm.complete_structured.side_effect = [
         # First call: LLMselect
-        LLMSelectResult(selected_documents=[DocumentSelection(document_id=doc_id, relevance_score=0.9)]),
+        LLMSelectResult(
+            selected_documents=[DocumentSelection(document_id=doc_id, relevance_score=0.9)]
+        ),
         # Second call: LLMnavigate
         LLMNavigateResult(selected_nodes=[]),
     ]
@@ -748,7 +875,8 @@ def test_query_node_level_returns_node_results(service, mock_llm, mock_embed, mo
 def test_query_node_level_returns_chunks(
     service, mock_llm, mock_embed, mock_node_repo, mock_session
 ) -> None:
-    """query() with node_level routing returns QueryResponse with chunks, total_tokens_used, and over_budget."""
+    """query() with node_level routing returns QueryResponse with chunks,
+    total_tokens_used, and over_budget."""
     doc_id = uuid.uuid4()
     root_id = uuid.uuid4()
     leaf_a_id = uuid.uuid4()
@@ -759,7 +887,7 @@ def test_query_node_level_returns_chunks(
     mock_node_repo.find_internal_nodes_by_depth = MagicMock(return_value=[section_node])
 
     # Setup: vector top-K returns same document
-    mock_node_repo.find_similar_internal_nodes = MagicMock(
+    mock_node_repo.find_similar_nodes = MagicMock(
         return_value=[(uuid.uuid4(), doc_id, 0.8)]
     )
 
@@ -773,15 +901,31 @@ def test_query_node_level_returns_chunks(
 
     # Setup: node-level retrieval nodes
     root_node = _make_tree_node(
-        root_id, doc_id, "root", depth=0, position=0,
+        root_id,
+        doc_id,
+        "root",
+        depth=0,
+        position=0,
     )
     leaf_a = _make_tree_node(
-        leaf_a_id, doc_id, "leaf", depth=1, position=0,
-        parent_id=root_id, content="leaf A content", token_count=50,
+        leaf_a_id,
+        doc_id,
+        "leaf",
+        depth=1,
+        position=0,
+        parent_id=root_id,
+        content="leaf A content",
+        token_count=50,
     )
     leaf_b = _make_tree_node(
-        leaf_b_id, doc_id, "leaf", depth=1, position=1,
-        parent_id=root_id, content="leaf B content", token_count=30,
+        leaf_b_id,
+        doc_id,
+        "leaf",
+        depth=1,
+        position=1,
+        parent_id=root_id,
+        content="leaf B content",
+        token_count=30,
     )
     mock_node_repo.find_all_nodes_for_documents = MagicMock(
         return_value=[root_node, leaf_a, leaf_b],

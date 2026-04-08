@@ -17,29 +17,22 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from testcontainers.postgres import PostgresContainer
 
 import openfable.db as db_mod
 import openfable.main as main_mod
 import openfable.services.ingestion.pipeline as pipeline_mod
-from openfable.models.chunk import Chunk
-from openfable.models.document import Document, IngestionJob
-from openfable.models.node import Node
 from openfable.repositories.document_repo import (
     DocumentRepository,
     compute_content_hash,
     count_tokens,
 )
-from openfable.repositories.node_repo import NodeInsert, NodeRepository
+from openfable.repositories.node_repo import NodeInsert
 from openfable.schemas.chunking import ChunkResult
 from openfable.services.embedding_service import EmbeddingService
 from openfable.services.llm_service import LLMService
-from openfable.services.retrieval_service import RetrievalService
 from tests.integration.fixtures import (
-    CHUNK_VECTORS_SHORT,
-    GOLDEN_DOC_SHORT,
-    MOCK_CHUNKS_SHORT,
     ROOT_VECTOR,
 )
 
@@ -81,9 +74,7 @@ def TestSessionLocal(session_engine):
 
 @pytest.fixture
 def clean_db(session_engine) -> Generator[None, None, None]:  # type: ignore[return]
-    truncate = text(
-        "TRUNCATE TABLE chunks, nodes, ingestion_jobs, documents RESTART IDENTITY CASCADE"
-    )
+    truncate = text("TRUNCATE TABLE chunks, nodes, documents RESTART IDENTITY CASCADE")
     with session_engine.begin() as conn:
         conn.execute(truncate)
     yield
@@ -104,7 +95,6 @@ def patch_engines(session_engine, monkeypatch):
     monkeypatch.setattr(db_mod, "engine", session_engine)
     monkeypatch.setattr(db_mod, "SessionLocal", test_session_local)
     monkeypatch.setattr(main_mod, "engine", session_engine)
-    monkeypatch.setattr(pipeline_mod, "SessionLocal", test_session_local)
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +126,12 @@ def mock_embedding_service() -> EmbeddingService:
 
 def make_mock_chunking_service(chunks_dicts: list[dict]) -> MagicMock:
     svc = MagicMock()
-    svc.segment = MagicMock(return_value=[
-        ChunkResult(chunk_text=c["chunk_text"], start_idx=c["start_idx"], end_idx=c["end_idx"])
-        for c in chunks_dicts
-    ])
+    svc.segment = MagicMock(
+        return_value=[
+            ChunkResult(chunk_text=c["chunk_text"], start_idx=c["start_idx"], end_idx=c["end_idx"])
+            for c in chunks_dicts
+        ]
+    )
     return svc
 
 
@@ -148,17 +140,32 @@ def make_mock_tree_builder(chunk_count: int, chunk_vectors: list[list[float]]) -
     leaf_ids = [uuid.uuid4() for _ in range(chunk_count)]
 
     root_ni = NodeInsert(
-        id=root_id, node_type="root", depth=1, position=0,
-        title="Test Root", summary="Test document summary",
-        toc_path="Test_Root", content=None, token_count=None,
-        parent_id=None, path="Test_Root",
+        id=root_id,
+        node_type="root",
+        depth=1,
+        position=0,
+        title="Test Root",
+        summary="Test document summary",
+        toc_path="Test_Root",
+        content=None,
+        token_count=None,
+        parent_id=None,
+        path="Test_Root",
     )
     leaf_nis = [
         NodeInsert(
-            id=leaf_ids[i], node_type="leaf", depth=2, position=i,
-            title=None, summary=None, toc_path=None,
-            content=f"Leaf content {i}", token_count=50,
-            parent_id=root_id, path=f"Test_Root.chunk_{i}", chunk_id=None,
+            id=leaf_ids[i],
+            node_type="leaf",
+            depth=2,
+            position=i,
+            title=None,
+            summary=None,
+            toc_path=None,
+            content=f"Leaf content {i}",
+            token_count=50,
+            parent_id=root_id,
+            path=f"Test_Root.chunk_{i}",
+            chunk_id=None,
         )
         for i in range(chunk_count)
     ]
@@ -170,20 +177,27 @@ def make_mock_tree_builder(chunk_count: int, chunk_vectors: list[list[float]]) -
     return builder
 
 
-def make_mock_embedding_service(mock_tree_builder: MagicMock, chunk_vectors: list[list[float]]) -> MagicMock:
+def make_mock_embedding_service(
+    mock_tree_builder: MagicMock,
+    chunk_vectors: list[list[float]],
+    root_vector: list[float] | None = None,
+) -> MagicMock:
     root_id = mock_tree_builder._root_id
     leaf_ids = mock_tree_builder._leaf_ids
+    _root_vec = root_vector if root_vector is not None else ROOT_VECTOR
 
     def _embed_nodes(node_texts, batch_size=64):
         result = []
         for node_id, _text in node_texts:
             if node_id == root_id:
-                result.append((node_id, ROOT_VECTOR))
+                result.append((node_id, _root_vec))
             elif node_id in leaf_ids:
                 idx = leaf_ids.index(node_id)
-                result.append((node_id, chunk_vectors[idx] if idx < len(chunk_vectors) else ROOT_VECTOR))
+                result.append(
+                    (node_id, chunk_vectors[idx] if idx < len(chunk_vectors) else _root_vec)
+                )
             else:
-                result.append((node_id, ROOT_VECTOR))
+                result.append((node_id, _root_vec))
         return result
 
     embed_svc = MagicMock()
@@ -198,28 +212,38 @@ def ingest_document(
     mock_llm_service,
     chunks_dicts: list[dict],
     chunk_vectors: list[list[float]],
+    root_vector: list[float] | None = None,
 ) -> uuid.UUID:
-    """Ingest a document through the full pipeline with mocked LLM/embeddings. Returns document_id."""
+    """Ingest a document through the full pipeline with mocked LLM/embeddings.
+
+    Returns document_id.
+    """
     mock_chunking = make_mock_chunking_service(chunks_dicts)
     mock_tree = make_mock_tree_builder(len(chunks_dicts), chunk_vectors)
-    mock_embed = make_mock_embedding_service(mock_tree, chunk_vectors)
+    mock_embed = make_mock_embedding_service(mock_tree, chunk_vectors, root_vector)
 
-    monkeypatch.setattr("openfable.services.ingestion.pipeline.LLMService", lambda *a, **kw: mock_llm_service)
-    monkeypatch.setattr("openfable.services.ingestion.pipeline.ChunkingService", lambda llm: mock_chunking)
+    monkeypatch.setattr(
+        "openfable.services.ingestion.pipeline.LLMService", lambda *a, **kw: mock_llm_service
+    )
+    monkeypatch.setattr(
+        "openfable.services.ingestion.pipeline.ChunkingService", lambda llm: mock_chunking
+    )
     monkeypatch.setattr("openfable.services.ingestion.pipeline.TreeBuilder", lambda llm: mock_tree)
-    monkeypatch.setattr("openfable.services.ingestion.pipeline.EmbeddingService", lambda *a, **kw: mock_embed)
+    monkeypatch.setattr(
+        "openfable.services.ingestion.pipeline.EmbeddingService", lambda *a, **kw: mock_embed
+    )
 
     repo = DocumentRepository()
     with TestSessionLocal() as session:
         with session.begin():
             content_hash = compute_content_hash(text)
             token_count = count_tokens(text)
-            doc, job = repo.create_with_job(session, text, content_hash, token_count)
+            doc = repo.create(session, text, content_hash, token_count)
             doc_id = doc.id
-            job_id = job.id
 
     from openfable.services.ingestion.pipeline import IngestionPipeline
+
     pipeline = IngestionPipeline()
-    t = pipeline.start(doc_id, job_id)
-    t.join(timeout=30)
+    with TestSessionLocal() as session:
+        pipeline.run(session, doc_id)
     return doc_id

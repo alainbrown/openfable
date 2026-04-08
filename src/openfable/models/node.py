@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Index, Integer, Text, DateTime, text
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import UserDefinedType
-from pgvector.sqlalchemy import Vector
 
 from openfable.db import Base
 
@@ -27,11 +27,13 @@ class LTreeType(UserDefinedType):
     def bind_processor(self, dialect: Dialect):
         def process(value: str | None) -> str | None:
             return value
+
         return process
 
     def result_processor(self, dialect: Dialect, coltype: object):
         def process(value: object) -> str | None:
             return str(value) if value is not None else None
+
         return process
 
 
@@ -43,7 +45,9 @@ class Node(Base):
     )
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    path: Mapped[str] = mapped_column(LTreeType, nullable=False)  # ltree column type via UserDefinedType
+    path: Mapped[str] = mapped_column(
+        LTreeType, nullable=False
+    )  # ltree column type via UserDefinedType
     node_type: Mapped[str] = mapped_column(Text, nullable=False)
     depth: Mapped[int] = mapped_column(Integer, nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))

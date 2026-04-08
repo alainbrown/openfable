@@ -31,6 +31,4 @@ def query_documents(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except EmbeddingError as exc:
         logger.error("Embedding service unavailable: %s", exc)
-        raise HTTPException(
-            status_code=503, detail="Embedding service unavailable"
-        ) from exc
+        raise HTTPException(status_code=503, detail="Embedding service unavailable") from exc

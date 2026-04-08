@@ -1,4 +1,4 @@
-"""Initial schema: documents, ingestion_jobs, nodes, chunks with pgvector and ltree extensions.
+"""Initial schema: documents, nodes, chunks with pgvector and ltree extensions.
 
 Revision ID: 0001
 Revises:
@@ -31,33 +31,9 @@ def upgrade() -> None:
         sa.Column("schema_version", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column("llm_model", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=True),
-        sa.Column("index_status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
-        sa.Column("error_detail", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
-        sa.CheckConstraint(
-            "index_status IN ('pending', 'in_progress', 'complete', 'failed')",
-            name="ck_documents_index_status",
-        ),
     )
-    op.create_index("idx_documents_status", "documents", ["index_status"])
-
-    # --- ingestion_jobs table ---
-    op.create_table(
-        "ingestion_jobs",
-        sa.Column("id", UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), primary_key=True),
-        sa.Column("document_id", UUID(as_uuid=True), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
-        sa.Column("error_detail", sa.Text(), nullable=True),
-        sa.Column("last_heartbeat", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
-        sa.CheckConstraint(
-            "status IN ('pending', 'chunking', 'tree_building', 'embedding', 'indexing', 'complete', 'failed')",
-            name="ck_ingestion_jobs_status",
-        ),
-    )
-    op.create_index("idx_ingestion_jobs_document", "ingestion_jobs", ["document_id"])
 
     # --- nodes table (adjacency list + ltree + pgvector) ---
     op.create_table(
@@ -122,7 +98,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("chunks")
     op.drop_table("nodes")
-    op.drop_table("ingestion_jobs")
     op.drop_table("documents")
     op.execute("DROP EXTENSION IF EXISTS ltree")
     op.execute("DROP EXTENSION IF EXISTS vector")

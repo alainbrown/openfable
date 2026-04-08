@@ -1,8 +1,8 @@
 import logging
 from typing import Any
 
-import litellm
 import instructor
+import litellm
 from pydantic import BaseModel
 
 from openfable.config import settings

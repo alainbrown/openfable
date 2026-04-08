@@ -20,7 +20,7 @@ def test_litellm_api_key_wired_anthropic(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENFABLE_LITELLM_API_KEY", raising=False)
 
-    s = Settings(litellm_api_key="sk-test-123")
+    Settings(litellm_api_key="sk-test-123")
     assert os.environ.get("ANTHROPIC_API_KEY") == "sk-test-123"
 
 
@@ -29,12 +29,12 @@ def test_litellm_api_key_wired_openai(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENFABLE_LITELLM_API_KEY", raising=False)
 
-    s = Settings(litellm_api_key="sk-test-123")
+    Settings(litellm_api_key="sk-test-123")
     assert os.environ.get("OPENAI_API_KEY") == "sk-test-123"
 
 
 def test_empty_api_key_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When OPENFABLE_LITELLM_API_KEY is empty, os.environ gains no ANTHROPIC_API_KEY or OPENAI_API_KEY."""
+    """When OPENFABLE_LITELLM_API_KEY is empty, no ANTHROPIC/OPENAI keys are set."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENFABLE_LITELLM_API_KEY", raising=False)

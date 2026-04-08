@@ -4,8 +4,8 @@ All TEI calls are mocked — no live embedding server required. Tests cover:
 - Multi-granularity text construction per node type (D-01, D-02)
 - Batched embedding via embed_nodes (batch splitting, order preservation)
 - TEI error propagation to EmbeddingError (HTTPStatusError, ConnectError)
-- Pipeline embedding stage transitions (embedding -> complete, no indexing)
-- Pipeline embedding error handling (EmbeddingError -> failed status)
+- Pipeline embedding stage transitions (embedding -> complete)
+- Pipeline embedding error handling (EmbeddingError -> raised)
 """
 
 import uuid
@@ -141,12 +141,11 @@ def test_embed_batch_parses_openai_format() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Section 3: Pipeline integration tests (async, heavy mocking)
+# Section 3: Pipeline integration tests (heavy mocking)
 # ---------------------------------------------------------------------------
 
 
 def _setup_pipeline_mocks(
-    mock_session_factory,
     mock_doc_repo_cls,
     mock_chunk_repo_cls,
     mock_chunking_cls,
@@ -158,17 +157,8 @@ def _setup_pipeline_mocks(
     num_nodes: int = 3,
 ):
     """Set up mocks for a pipeline run that reaches the embedding stage."""
-    # Session mock (sync context manager)
-    session = MagicMock()
-    ctx = MagicMock()
-    ctx.__enter__ = MagicMock(return_value=session)
-    ctx.__exit__ = MagicMock(return_value=False)
-    mock_session_factory.return_value = ctx
-
     # Document repo
     doc_repo = MagicMock()
-    doc_repo.update_job_status = MagicMock()
-    doc_repo.update_document_status = MagicMock()
     doc_repo.get_by_id = MagicMock()
     doc = MagicMock()
     doc.content = "Test document content"
@@ -219,11 +209,6 @@ def _setup_pipeline_mocks(
     chunk_result = MagicMock()
     chunk_result.scalars.return_value = chunk_scalars
 
-    # session.execute: chunk select, node select, then UPDATE per node
-    session.execute = MagicMock(
-        side_effect=[chunk_result, node_result] + [MagicMock()] * num_nodes
-    )
-
     # Embedding service
     embed_svc = MagicMock()
     embeddings = [(n.id, [0.1] * 1024) for n in mock_nodes]
@@ -233,7 +218,7 @@ def _setup_pipeline_mocks(
     # LLM service
     mock_llm_cls.return_value = MagicMock()
 
-    return session, doc_repo, embed_svc, mock_nodes, embeddings
+    return doc_repo, embed_svc, mock_nodes, embeddings, chunk_result, node_result
 
 
 @patch("openfable.services.ingestion.pipeline.LLMService")
@@ -243,9 +228,7 @@ def _setup_pipeline_mocks(
 @patch("openfable.services.ingestion.pipeline.ChunkingService")
 @patch("openfable.services.ingestion.pipeline.ChunkRepository")
 @patch("openfable.services.ingestion.pipeline.DocumentRepository")
-@patch("openfable.services.ingestion.pipeline.SessionLocal")
-def test_pipeline_skips_indexing_stage(
-    mock_session_factory,
+def test_pipeline_completes(
     mock_doc_repo_cls,
     mock_chunk_repo_cls,
     mock_chunking_cls,
@@ -254,12 +237,11 @@ def test_pipeline_skips_indexing_stage(
     mock_embed_svc_cls,
     mock_llm_cls,
 ) -> None:
-    """Pipeline transitions: chunking -> tree_building -> embedding -> complete (no 'indexing')."""
+    """Pipeline transitions through stages and completes."""
     doc_id = uuid.uuid4()
-    job_id = uuid.uuid4()
+    num_nodes = 3
 
-    session, doc_repo, embed_svc, mock_nodes, _ = _setup_pipeline_mocks(
-        mock_session_factory,
+    doc_repo, embed_svc, mock_nodes, _, chunk_result, node_result = _setup_pipeline_mocks(
         mock_doc_repo_cls,
         mock_chunk_repo_cls,
         mock_chunking_cls,
@@ -267,16 +249,18 @@ def test_pipeline_skips_indexing_stage(
         mock_node_repo_cls,
         mock_embed_svc_cls,
         mock_llm_cls,
+        num_nodes=num_nodes,
     )
 
+    session = MagicMock()
+    # session.execute: chunk select, node select, then UPDATE per node
+    session.execute = MagicMock(side_effect=[chunk_result, node_result] + [MagicMock()] * num_nodes)
+
     pipeline = IngestionPipeline()
-    pipeline._run(doc_id, job_id)
+    pipeline.run(session, doc_id)
 
-    # Extract the status arguments from update_job_status calls
-    status_calls = [c.args[2] for c in doc_repo.update_job_status.call_args_list]
-
-    assert status_calls == ["chunking", "tree_building", "embedding", "complete"]
-    assert "indexing" not in status_calls
+    # Verify embedding was called
+    embed_svc.embed_nodes.assert_called_once()
 
 
 @patch("openfable.services.ingestion.pipeline.LLMService")
@@ -286,9 +270,7 @@ def test_pipeline_skips_indexing_stage(
 @patch("openfable.services.ingestion.pipeline.ChunkingService")
 @patch("openfable.services.ingestion.pipeline.ChunkRepository")
 @patch("openfable.services.ingestion.pipeline.DocumentRepository")
-@patch("openfable.services.ingestion.pipeline.SessionLocal")
 def test_pipeline_embedding_stage_calls_embed_nodes(
-    mock_session_factory,
     mock_doc_repo_cls,
     mock_chunk_repo_cls,
     mock_chunking_cls,
@@ -299,10 +281,9 @@ def test_pipeline_embedding_stage_calls_embed_nodes(
 ) -> None:
     """Pipeline calls embed_nodes with (node_id, text) pairs built from _build_embedding_text."""
     doc_id = uuid.uuid4()
-    job_id = uuid.uuid4()
+    num_nodes = 3
 
-    session, doc_repo, embed_svc, mock_nodes, _ = _setup_pipeline_mocks(
-        mock_session_factory,
+    doc_repo, embed_svc, mock_nodes, _, chunk_result, node_result = _setup_pipeline_mocks(
         mock_doc_repo_cls,
         mock_chunk_repo_cls,
         mock_chunking_cls,
@@ -310,10 +291,14 @@ def test_pipeline_embedding_stage_calls_embed_nodes(
         mock_node_repo_cls,
         mock_embed_svc_cls,
         mock_llm_cls,
+        num_nodes=num_nodes,
     )
 
+    session = MagicMock()
+    session.execute = MagicMock(side_effect=[chunk_result, node_result] + [MagicMock()] * num_nodes)
+
     pipeline = IngestionPipeline()
-    pipeline._run(doc_id, job_id)
+    pipeline.run(session, doc_id)
 
     embed_svc.embed_nodes.assert_called_once()
     call_args = embed_svc.embed_nodes.call_args
@@ -340,9 +325,7 @@ def test_pipeline_embedding_stage_calls_embed_nodes(
 @patch("openfable.services.ingestion.pipeline.ChunkingService")
 @patch("openfable.services.ingestion.pipeline.ChunkRepository")
 @patch("openfable.services.ingestion.pipeline.DocumentRepository")
-@patch("openfable.services.ingestion.pipeline.SessionLocal")
 def test_pipeline_embedding_stage_writes_vectors(
-    mock_session_factory,
     mock_doc_repo_cls,
     mock_chunk_repo_cls,
     mock_chunking_cls,
@@ -353,11 +336,9 @@ def test_pipeline_embedding_stage_writes_vectors(
 ) -> None:
     """Pipeline issues UPDATE per node after embedding (2 SELECTs + num_nodes UPDATEs)."""
     doc_id = uuid.uuid4()
-    job_id = uuid.uuid4()
     num_nodes = 3
 
-    session, doc_repo, embed_svc, mock_nodes, _ = _setup_pipeline_mocks(
-        mock_session_factory,
+    doc_repo, embed_svc, mock_nodes, _, chunk_result, node_result = _setup_pipeline_mocks(
         mock_doc_repo_cls,
         mock_chunk_repo_cls,
         mock_chunking_cls,
@@ -368,8 +349,11 @@ def test_pipeline_embedding_stage_writes_vectors(
         num_nodes=num_nodes,
     )
 
+    session = MagicMock()
+    session.execute = MagicMock(side_effect=[chunk_result, node_result] + [MagicMock()] * num_nodes)
+
     pipeline = IngestionPipeline()
-    pipeline._run(doc_id, job_id)
+    pipeline.run(session, doc_id)
 
     # session.execute calls: 1 chunk SELECT + 1 node SELECT + num_nodes UPDATE
     total_execute_calls = session.execute.call_count
@@ -383,9 +367,7 @@ def test_pipeline_embedding_stage_writes_vectors(
 @patch("openfable.services.ingestion.pipeline.ChunkingService")
 @patch("openfable.services.ingestion.pipeline.ChunkRepository")
 @patch("openfable.services.ingestion.pipeline.DocumentRepository")
-@patch("openfable.services.ingestion.pipeline.SessionLocal")
-def test_pipeline_embedding_error_sets_failed(
-    mock_session_factory,
+def test_pipeline_embedding_error_raises(
     mock_doc_repo_cls,
     mock_chunk_repo_cls,
     mock_chunking_cls,
@@ -394,17 +376,11 @@ def test_pipeline_embedding_error_sets_failed(
     mock_embed_svc_cls,
     mock_llm_cls,
 ) -> None:
-    """EmbeddingError -> job status 'failed' with error_detail containing the message.
-
-    The pipeline instantiates DocumentRepository once at the start of _run() and reuses
-    the same instance in all error handlers. The error handler opens a fresh
-    SessionLocal context, but uses the same repo object.
-    """
+    """EmbeddingError propagates from the pipeline."""
     doc_id = uuid.uuid4()
-    job_id = uuid.uuid4()
+    num_nodes = 3
 
-    session, doc_repo, embed_svc, mock_nodes, _ = _setup_pipeline_mocks(
-        mock_session_factory,
+    doc_repo, embed_svc, mock_nodes, _, chunk_result, node_result = _setup_pipeline_mocks(
         mock_doc_repo_cls,
         mock_chunk_repo_cls,
         mock_chunking_cls,
@@ -412,39 +388,15 @@ def test_pipeline_embedding_error_sets_failed(
         mock_node_repo_cls,
         mock_embed_svc_cls,
         mock_llm_cls,
+        num_nodes=num_nodes,
     )
 
     # Override embed_nodes to raise EmbeddingError
     embed_svc.embed_nodes = MagicMock(side_effect=EmbeddingError("TEI down"))
 
-    # The error handler opens a fresh session via SessionLocal() -- provide a second ctx
-    error_session = MagicMock()
-    error_ctx = MagicMock()
-    error_ctx.__enter__ = MagicMock(return_value=error_session)
-    error_ctx.__exit__ = MagicMock(return_value=False)
-
-    # First call: normal session ctx; second call: error handler's fresh session ctx
-    ctx = mock_session_factory.return_value
-    mock_session_factory.side_effect = [ctx, error_ctx]
+    session = MagicMock()
+    session.execute = MagicMock(side_effect=[chunk_result, node_result])
 
     pipeline = IngestionPipeline()
-    pipeline._run(doc_id, job_id)
-
-    # The pipeline uses the SAME repo instance (DocumentRepository() created once in _run).
-    # Check all update_job_status calls on doc_repo for a "failed" status with "TEI down" detail.
-    all_status_calls = doc_repo.update_job_status.call_args_list
-    failed_calls = [
-        c
-        for c in all_status_calls
-        if len(c.args) >= 3 and c.args[2] == "failed"
-    ]
-    assert len(failed_calls) >= 1, (
-        f"Expected at least one 'failed' status call. All calls: {all_status_calls}"
-    )
-
-    # error_detail kwarg contains the EmbeddingError message
-    failed_call = failed_calls[0]
-    error_detail = failed_call.kwargs.get("error_detail", "")
-    assert "TEI down" in error_detail, (
-        f"Expected 'TEI down' in error_detail, got: {error_detail!r}"
-    )
+    with pytest.raises(EmbeddingError, match="TEI down"):
+        pipeline.run(session, doc_id)

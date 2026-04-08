@@ -1,5 +1,5 @@
-from openfable.models.document import Document, IngestionJob
-from openfable.models.node import Node
 from openfable.models.chunk import Chunk
+from openfable.models.document import Document
+from openfable.models.node import Node
 
-__all__ = ["Document", "IngestionJob", "Node", "Chunk"]
+__all__ = ["Document", "Node", "Chunk"]
