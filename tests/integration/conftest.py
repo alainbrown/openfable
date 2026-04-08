@@ -22,7 +22,6 @@ from testcontainers.postgres import PostgresContainer
 
 import openfable.db as db_mod
 import openfable.main as main_mod
-import openfable.services.ingestion.pipeline as pipeline_mod
 from openfable.repositories.document_repo import (
     DocumentRepository,
     compute_content_hash,
