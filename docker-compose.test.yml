@@ -1,12 +1,11 @@
 services:
-  api:
+  openfable:
     build: .
     ports:
       - "8000:8000"
     environment:
       OPENFABLE_DATABASE_URL: "postgresql://openfable:openfable@db:5432/openfable"
       OPENFABLE_LITELLM_MODEL: "ollama/qwen3:8b"
-      OPENFABLE_LITELLM_API_KEY: ""
       OPENFABLE_LITELLM_BASE_URL: "http://ollama:11434"
       OPENFABLE_EMBEDDING_URL: "http://embeddings:80"
       OPENFABLE_EMBEDDING_MODEL: "BAAI/bge-m3"
@@ -29,15 +28,16 @@ services:
     restart: unless-stopped
 
   e2e:
-    image: python:3.12-slim
-    working_dir: /tests
+    build: .
     volumes:
-      - ./e2e:/tests
-    command: sh -c "pip install -q pytest httpx && pytest -v"
+      - ./e2e:/app/e2e
+    command: sh -c "uv sync --frozen --group e2e && .venv/bin/pytest e2e/ -v"
     environment:
-      OPENFABLE_API_URL: "http://api:8000"
+      OPENFABLE_API_URL: "http://openfable:8000"
+      OPENFABLE_DATABASE_URL: "postgresql://openfable:openfable@db:5432/openfable"
+      OPENFABLE_LITELLM_BASE_URL: "http://ollama:11434"
     depends_on:
-      api:
+      openfable:
         condition: service_healthy
 
   db:
