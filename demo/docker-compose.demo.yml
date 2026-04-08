@@ -1,0 +1,56 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: openfable
+      POSTGRES_PASSWORD: openfable
+      POSTGRES_DB: openfable
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfable -d openfable"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ..
+    ports:
+      - "8000:8000"
+    environment:
+      OPENFABLE_DATABASE_URL: "postgresql://openfable:openfable@db:5432/openfable"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      OPENFABLE_EMBEDDING_API_KEY: "${OPENAI_API_KEY}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  recorder:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.recorder
+    environment:
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      OPENFABLE_URL: "http://api:8000"
+    volumes:
+      - ..:/app
+    depends_on:
+      api:
+        condition: service_healthy
+    tty: true
+    command: >
+      sh -c "
+      uv sync --frozen --group e2e &&
+      asciinema rec /app/demo/demo.cast --overwrite --command '.venv/bin/python demo/mcp_demo.py' &&
+      agg /app/demo/demo.cast /app/demo/demo.gif
+      "
+
+volumes:
+  pgdata:
