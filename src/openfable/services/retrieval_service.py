@@ -166,8 +166,8 @@ LLMNAVIGATE_SYSTEM = (
     "\n\n"
     "Your task is to navigate this hierarchy and identify "
     "the subtree roots most relevant to the query. "
-    "Selecting a node means \"the content under this "
-    "subtree is relevant.\" Consider:\n"
+    'Selecting a node means "the content under this '
+    'subtree is relevant." Consider:\n'
     "- Start broad: which top-level sections relate to "
     "the query?\n"
     "- Narrow down: within those, which subsections are "
@@ -552,9 +552,7 @@ class RetrievalService:
         aggregates to document-level by taking max similarity per document.
         Returns dict mapping document_id -> max similarity score.
         """
-        rows = self.node_repo.find_similar_nodes(
-            session, query_vector, settings.retrieval_top_k
-        )
+        rows = self.node_repo.find_similar_nodes(session, query_vector, settings.retrieval_top_k)
         doc_scores: dict[uuid.UUID, float] = {}
         for _node_id, document_id, similarity in rows:
             if document_id not in doc_scores or similarity > doc_scores[document_id]:

@@ -809,9 +809,7 @@ def test_query_node_level_returns_node_results(
     )
 
     # Setup: vector top-K returns same document
-    mock_node_repo.find_similar_nodes = MagicMock(
-        return_value=[(uuid.uuid4(), doc_id, 0.8)]
-    )
+    mock_node_repo.find_similar_nodes = MagicMock(return_value=[(uuid.uuid4(), doc_id, 0.8)])
 
     # Setup: _route returns node_level (budget exceeded)
     doc = _make_document(doc_id, token_count=5000, content="Large doc")
@@ -887,9 +885,7 @@ def test_query_node_level_returns_chunks(
     mock_node_repo.find_internal_nodes_by_depth = MagicMock(return_value=[section_node])
 
     # Setup: vector top-K returns same document
-    mock_node_repo.find_similar_nodes = MagicMock(
-        return_value=[(uuid.uuid4(), doc_id, 0.8)]
-    )
+    mock_node_repo.find_similar_nodes = MagicMock(return_value=[(uuid.uuid4(), doc_id, 0.8)])
 
     # Setup: _route returns node_level (budget exceeded)
     doc = _make_document(doc_id, token_count=5000, content="Large doc")
