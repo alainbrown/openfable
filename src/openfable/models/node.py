@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
@@ -11,7 +12,7 @@ from sqlalchemy.types import UserDefinedType
 from openfable.db import Base
 
 
-class LTreeType(UserDefinedType):
+class LTreeType(UserDefinedType[str]):
     """SQLAlchemy type for PostgreSQL ltree column type.
 
     asyncpg sends Python strings as $1::VARCHAR which PostgreSQL rejects for ltree.
@@ -24,13 +25,15 @@ class LTreeType(UserDefinedType):
     def get_col_spec(self, **kw: object) -> str:
         return "ltree"
 
-    def bind_processor(self, dialect: Dialect):
+    def bind_processor(self, dialect: Dialect) -> Callable[[str | None], str | None] | None:
         def process(value: str | None) -> str | None:
             return value
 
         return process
 
-    def result_processor(self, dialect: Dialect, coltype: object):
+    def result_processor(
+        self, dialect: Dialect, coltype: object
+    ) -> Callable[[object], str | None] | None:
         def process(value: object) -> str | None:
             return str(value) if value is not None else None
 

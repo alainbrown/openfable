@@ -252,7 +252,7 @@ class RetrievalService:
                     token_count=r.token_count,
                     score=r.score,
                     position=r.position,
-                    source=r.source,  # type: ignore[arg-type]
+                    source=r.source,
                 )
                 for r in selected
             ]
@@ -313,7 +313,7 @@ class RetrievalService:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0,
-            )  # type: ignore[assignment]
+            )
             # Guard against LLM hallucinating document IDs
             return {
                 sel.document_id: sel.relevance_score
@@ -358,7 +358,7 @@ class RetrievalService:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0,
-            )  # type: ignore[assignment]
+            )
             # Guard against LLM hallucinating node IDs (D-01)
             valid_ids = {n.id for n in nodes}
             return {
@@ -630,7 +630,7 @@ class RetrievalService:
 
         return QueryResponse(
             query=query,
-            routing=routing,  # type: ignore[arg-type]
+            routing=routing,
             total_tokens=total_tokens,
             documents=documents,
         )

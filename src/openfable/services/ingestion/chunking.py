@@ -148,7 +148,7 @@ class ChunkingService:
             {"role": "user", "content": USER_TEMPLATE.format(text=text)},
         ]
         try:
-            response: ChunkingResponse = self.llm.complete_structured(  # type: ignore[assignment]
+            response: ChunkingResponse = self.llm.complete_structured(
                 response_model=ChunkingResponse,
                 messages=messages,
                 max_retries=3,

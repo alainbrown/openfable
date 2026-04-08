@@ -425,7 +425,7 @@ class TreeBuilder:
             {"role": "user", "content": user_msg},
         ]
         try:
-            response: TreeBuildResponse = self.llm.complete_structured(  # type: ignore[assignment]
+            response: TreeBuildResponse = self.llm.complete_structured(
                 response_model=TreeBuildResponse,
                 messages=messages,
                 max_retries=3,
@@ -493,7 +493,7 @@ class TreeBuilder:
             {"role": "user", "content": user_msg},
         ]
         try:
-            response: TreeBuildResponse = self.llm.complete_structured(  # type: ignore[assignment]
+            response: TreeBuildResponse = self.llm.complete_structured(
                 response_model=TreeBuildResponse,
                 messages=messages,
                 max_retries=3,
@@ -531,7 +531,7 @@ class TreeBuilder:
             {"role": "user", "content": user_msg},
         ]
         try:
-            response: TreeMergeResponse = self.llm.complete_structured(  # type: ignore[assignment]
+            response: TreeMergeResponse = self.llm.complete_structured(
                 response_model=TreeMergeResponse,
                 messages=messages,
                 max_retries=3,

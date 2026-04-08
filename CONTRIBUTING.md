@@ -17,7 +17,7 @@ The API is at http://localhost:8000. Edit files locally — changes reload autom
 For an interactive shell (tests, linting, type checking):
 
 ```bash
-docker compose -f docker-compose.dev.yml run --rm dev
+docker compose -f docker-compose.dev.yml run --rm api
 ```
 
 ```bash
@@ -62,7 +62,7 @@ uv run mypy src/
 
 ## Submitting changes
 
-1. Fork the repo and create a branch from `master`
+1. Fork the repo and create a branch from `main`
 2. Make your changes
 3. Ensure tests, linting, and type checking pass
 4. Open a pull request

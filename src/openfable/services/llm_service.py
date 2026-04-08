@@ -1,11 +1,13 @@
 import logging
-from typing import Any
+from typing import Any, TypeVar, cast
 
 import instructor
 import litellm
 from pydantic import BaseModel
 
 from openfable.config import settings
+
+T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger("openfable.llm")
 logger.setLevel(logging.DEBUG)
@@ -39,18 +41,21 @@ class LLMService:
 
     def complete_structured(
         self,
-        response_model: type[BaseModel],
+        response_model: type[T],
         messages: list[dict[str, str]],
         max_retries: int = 3,
         temperature: float = 0,
-    ) -> BaseModel:
+    ) -> T:
         """Call LLM and parse response into a Pydantic model with retry on validation failure."""
-        return self.client.chat.completions.create(
-            model=self.model,
-            response_model=response_model,
-            max_retries=max_retries,
-            messages=messages,
-            temperature=temperature,
+        return cast(
+            T,
+            self.client.chat.completions.create(
+                model=self.model,
+                response_model=response_model,
+                max_retries=max_retries,
+                messages=messages,
+                temperature=temperature,
+            ),
         )
 
     def health_probe(self) -> None:

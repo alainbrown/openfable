@@ -58,3 +58,7 @@ select = ["E", "F", "I", "W"]
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
 strict = true
+
+[[tool.mypy.overrides]]
+module = "pgvector.*"
+ignore_missing_imports = true
