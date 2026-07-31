@@ -38,10 +38,33 @@ a document another script indexed. Re-running a script is safe: identical
 content re-registers as `reingest: true`, clearing the previous index rather
 than duplicating it.
 
-**Node scores are normalised per document and are not comparable across
-documents.** In a multi-document corpus, an unrelated document's best chunk can
-show a higher score than the chunk that actually answers your question, and a
-larger budget can pull that noise in ahead of the answer. Trust the
-document-level ranking first; treat node scores as meaningful only within a
-single document. `06` demonstrates this and works around it by asserting on
-chunk token counts, which are deterministic, rather than on scores.
+**Across documents, ranking follows the document root more than the chunk.**
+Node scores are globally comparable — min-max normalised across every candidate
+leaf at once — so the distortion is not in the normalisation. It is upstream.
+
+FABLE is bi-path: an LLM selects documents, and structure-aware scoring recovers
+passages within that selection. `--vector-only` removes the LLM path, leaving
+the structural score to do document selection unaided, which it was never meant
+to do.
+
+The scoring is `S(v) = ⅓[S_sim + S_inh + S_child]`, and a leaf has no children,
+so `S_child = 0`. `S_sim` is the leaf's own similarity divided by its depth;
+`S_inh` is the highest ancestor `S_sim`, and since the root sits at depth 1 its
+similarity enters undivided and is inherited identically by every leaf below it.
+So a per-document constant can outweigh what the chunk actually says. Measured
+here: a chunk with cosine 0.5873 at depth 3 scored 0.1655 and lost to one with
+cosine 0.3355 at depth 2 scoring 0.2064, because their document roots scored
+0.3007 and 0.4514 respectively.
+
+This is faithful to the paper, not an implementation defect — the equations
+match §3.2 of [arXiv:2601.18116v1](https://arxiv.org/abs/2601.18116v1). The v2
+revision generalises the weights to `α·S_sim + β·S_inh + γ·S_child` and calls
+the equal ⅓ split a "simple untuned default", noting the method is sensitive to
+them by query type.
+
+Practically: trust the document-level result first, treat node scores as
+reliable only within a single document, and narrow rather than widen the budget
+when a query returns plausible-but-wrong content. Within one document all leaves
+inherit the same root value, so it cancels and ranking behaves normally — keep
+building proper hierarchy. `06` avoids the issue entirely by asserting on chunk
+token counts, which are deterministic.

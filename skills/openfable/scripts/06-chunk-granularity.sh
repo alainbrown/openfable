@@ -122,9 +122,26 @@ for c in hits[:4]:
 #   * over-splitting is cheaper than under-splitting, but strips context; keep
 #     each chunk self-contained enough to be read alone
 #
-# CAVEAT on the scores printed above: node scores are normalised per document,
-# so they are NOT comparable across documents. In a corpus holding several
-# documents, an unrelated document's best chunk can show a higher score than
-# the chunk that actually answers your question, and a larger budget can pull
-# that noise in ahead of the answer. Trust the document-level ranking first,
-# and treat node scores as meaningful only within one document.
+# CAVEAT on the scores printed above. They ARE globally comparable — min-max
+# normalised across every candidate leaf at once. The distortion is upstream.
+#
+# FABLE is bi-path: an LLM selects documents, and structure-aware scoring
+# recovers passages within that selection. --vector-only removes the LLM path,
+# so the structural score alone performs document selection, unaided.
+#
+# S(v) = 1/3[S_sim + S_inh + S_child]; a leaf has no children so S_child = 0.
+# S_sim is the leaf's own similarity divided by its depth. S_inh is the highest
+# ancestor S_sim — and the root is at depth 1, so its similarity enters
+# undivided and every leaf beneath inherits the same value. That per-document
+# constant can outweigh what the chunk itself says.
+#
+# Across documents, then, ranking follows document-root similarity more than
+# chunk relevance, and a LARGER budget can pull another document's chunks in
+# ahead of the answer — narrow rather than widen when results look
+# plausible-but-wrong. Within one document the inherited value is the same for
+# every leaf, so it cancels and ranking behaves normally; keep building proper
+# hierarchy.
+#
+# This matches the paper (arXiv:2601.18116v1 §3.2) and is not an OpenFable
+# defect. That is why this script asserts on chunk token counts, which are
+# deterministic, rather than on scores.

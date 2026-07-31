@@ -272,12 +272,36 @@ $OF exec openfable openfable query "which env var sets the embedding model" --bu
       <field name="total_tokens_used">How much of the budget was actually spent.</field>
     </response_fields>
 
-    <caveat id="cross-document-scores">
-    Node scores are normalised per document and are NOT comparable across
-    documents. In a multi-document corpus an unrelated document's best chunk
-    can outscore the chunk that answers your question, and a larger budget can
-    pull that noise in ahead of the answer. Trust the document-level ranking
-    first; treat node scores as meaningful only within one document.
+    <caveat id="cross-document-ranking">
+    Node scores ARE globally comparable — they are min-max normalised across
+    every candidate leaf at once. The distortion is upstream of that.
+
+    FABLE is bi-path: an LLM picks the documents, and structure-aware scoring
+    recovers passages within that selection. --vector-only removes the LLM
+    path, so the structural score alone has to do document selection, which it
+    was not designed to do unaided.
+
+    Scoring is S(v) = 1/3[S_sim + S_inh + S_child]; a leaf has no children, so
+    S_child is 0. S_sim is the leaf's own similarity divided by its depth.
+    S_inh is the highest ancestor S_sim, and the root sits at depth 1, so the
+    root's similarity enters undivided and is inherited identically by every
+    leaf beneath it. S_inh therefore acts as a per-document constant that can
+    outweigh what the chunk itself says.
+
+    Measured on a real corpus: a chunk with cosine 0.5873 at depth 3 scored
+    0.1655, losing to a chunk with cosine 0.3355 at depth 2 that scored 0.2064,
+    purely because its document root scored 0.3007 against the other's 0.4514.
+
+    Consequences, in order of how often they bite:
+      - ACROSS documents, ranking follows document-root similarity more than
+        chunk relevance. Trust the document-level result; treat node scores as
+        reliable only within one document.
+      - A LARGER budget can pull in another document's chunks ahead of the
+        answer. If a query returns plausible-but-wrong content, narrow the
+        budget rather than widening it.
+      - WITHIN one document all leaves inherit the same root value, so it
+        cancels and ranking behaves normally. Building proper hierarchy is
+        still correct — do not flatten trees to game this.
     </caveat>
   </step>
 </workflow>
