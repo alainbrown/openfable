@@ -9,44 +9,52 @@ An open-source retrieval engine implementing [FABLE](https://arxiv.org/abs/2601.
 
 ## Agents start here
 
-OpenFable is a Claude Code plugin. Install it once and the skill is available in every project:
+Install the plugin. It requires a published container image, so install from a tagged release rather than a bare `main` checkout.
 
 ```
 /plugin marketplace add alainbrown/openfable
 /plugin install openfable@openfable
 ```
 
-Then, from a directory holding documents, ask for what you actually want:
+Run from the directory holding the documents. That directory is mounted read-only at `/work` inside the container, so `./spec.md` is `/work/spec.md`.
 
-> Index ./spec.md with OpenFable, then tell me what it says about rate limits.
+OpenFable does not chunk documents. You read the document, choose the chunk boundaries, and build the tree. It resolves those boundaries to character offsets, persists them, embeds every node, scores retrieval, and enforces the token budget.
 
-**You do the indexing reasoning.** OpenFable does not chunk documents for you. You read the document, decide where the topic changes, and build the tree; it persists, embeds, scores, and enforces the token budget. That division is the reason no LLM API key is needed — you are the model.
+Index quality therefore depends on the agent, and we recommend a capable frontier model — Opus 5 or equivalent. Validation rejects structurally invalid input: a marker that is not verbatim, a missing or duplicated `chunk_index`, a malformed node. It cannot tell whether the boundaries fall at genuine topic changes, or whether a summary states what a subtree says rather than merely naming it. Those are judgments, and a weaker model degrades them without erroring.
 
-**First run onboards you once.** Two questions about where PostgreSQL and embeddings should live, or skip them and take local containers for both. It writes a `.openfable/` directory into your working directory:
+The server path below does not have this variance: it runs the same pipeline in code, calling an LLM at `temperature=0` for the chunking and tree steps. The sequence is enforced rather than followed. Use it when indexing must be reproducible.
+
+### First run
+
+When `.openfable/preferences.json` is absent, the skill onboards: two questions about where PostgreSQL and embeddings should run, or skip for local containers of both. It writes
 
 ```
 .openfable/
-├── docker-compose.yml    generated to match your answers
-├── preferences.json      the gate — commit this
-├── .env                  URLs and keys — gitignored for you
+├── docker-compose.yml    generated from the answers
+├── preferences.json      presence of this file skips onboarding
+├── .env                  connection details, gitignored
 └── .gitignore
 ```
 
-`preferences.json` existing is what stops you being asked again. Answer the questions rather than skipping if you have a managed pgvector instance (Neon, Supabase, RDS) or an existing embeddings endpoint — onboarding validates before it writes anything: reachability, the `vector` and `ltree` extensions, and that your endpoint returns 1024-dimension vectors. Pointing several projects at one database is also how you share a corpus between them; the default is one corpus per directory.
+Answer rather than skip when PostgreSQL or embeddings already exist elsewhere — a managed pgvector instance, or an OpenAI-compatible embeddings endpoint. Onboarding checks reachability, the `vector` and `ltree` extensions, and that the endpoint returns 1024-dimension vectors before writing anything.
 
-**Indexing is a three-step handshake.** Each step consumes the previous step's output, so they cannot be reordered or skipped:
+Corpora are per-directory. Pointing several projects at one database shares a corpus between them.
 
-| Step | Command | Produces |
-|------|---------|----------|
+### Indexing
+
+Three steps. Each consumes the previous step's output, so they cannot be reordered or skipped.
+
+| Step | Command | Output |
+|------|---------|--------|
 | 1 | `openfable plan <path>` | `document_id` |
-| 2 | `openfable apply-chunks <id> -` | the `chunk_index` set |
-| 3 | `openfable apply-tree <id> -` | an indexed, queryable document |
+| 2 | `openfable apply-chunks <id> -` | `chunk_index` set |
+| 3 | `openfable apply-tree <id> -` | indexed document |
 
-Every command prints exactly one JSON object. A failure prints `{"error": "..."}` and exits non-zero with a message naming what to fix — correct your input and re-run *the same step*. A rejected step persists nothing, so there is no partial state to clean up.
+Commands print one JSON object. Failure prints `{"error": "..."}` and exits non-zero. Correct the input and re-run the same step; a rejected step persists nothing.
 
-**Read [`skills/openfable/SKILL.md`](skills/openfable/SKILL.md) before your first index.** It is the authoritative contract: onboarding, both workflows step by step, the error strings and what each means, and how to pick a token budget. Six runnable worked examples live in [`skills/openfable/scripts/`](skills/openfable/scripts/) — read the one matching your situation rather than all of them, and start with `01-simple-document.sh`.
+### Reference
 
-> Requires the published container image, so install from a tagged release rather than a bare `main` checkout.
+[`skills/openfable/SKILL.md`](skills/openfable/SKILL.md) is the full contract — onboarding, both workflows, error strings, budget selection. Worked examples are in [`skills/openfable/scripts/`](skills/openfable/scripts/); read the one matching the situation, starting with `01-simple-document.sh`.
 
 ## Running as a server — REST + MCP
 

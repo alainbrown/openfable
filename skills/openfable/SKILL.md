@@ -1,68 +1,55 @@
 ---
 name: openfable
-description: Index long documents into a semantic forest and retrieve from them within a token budget. Use when the user wants to ingest, index, or search documents (specs, papers, contracts, manuals, transcripts) too long to read whole, or asks a question about a corpus already indexed in OpenFable. You supply the chunking and tree structure yourself — no LLM API key needed.
-compatibility: Requires Docker with Compose v2. No LLM API key needed.
+description: Index long documents into a semantic forest and retrieve from them within a token budget. Use when the user wants to ingest, index, or search documents (specs, papers, contracts, manuals, transcripts) too long to read whole, or asks a question about a corpus already indexed in OpenFable. You supply the chunking and tree structure yourself.
+compatibility: Requires Docker with Compose v2.
 license: Apache-2.0
 ---
 
 <skill name="openfable">
 
 <overview>
-Retrieval over long, structured documents. Each document becomes a tree
-(root → sections → subsections → leaves); queries return the most relevant
-nodes within a token budget.
+Each document becomes a tree: root → sections → subsections → leaves. Leaves hold
+chunk text; internal nodes hold a title and summary. Every node is embedded.
+Queries return the highest-scoring nodes that fit a token budget.
 
-You do the indexing reasoning: you read the document, choose chunk boundaries,
-and build the tree. OpenFable persists, embeds, scores, and enforces the budget.
-No LLM API key is involved — embeddings run in a local container.
+You choose the chunk boundaries and build the tree. OpenFable resolves boundaries
+to character offsets, persists, embeds, scores, and enforces the budget.
 </overview>
 
 <onboarding trigger="missing-preferences" skippable="true" rerun-with="setup">
   <gate>
-    <check order="1">If .openfable/preferences.json exists, onboarding is DONE. Do not ask anything; go straight to setup.</check>
-    <check order="2">If it exists but its skill_version differs from 1, the compose template has moved on. Offer to regenerate .openfable/docker-compose.yml; do not regenerate .env.</check>
-    <warning>Preferences existing means the configuration is known, NOT that the stack is running. Always run health afterwards.</warning>
+    <check order="1">.openfable/preferences.json exists → skip onboarding, go to setup.</check>
+    <check order="2">Exists but skill_version != 1 → offer to regenerate docker-compose.yml only. Never regenerate .env.</check>
+    <check order="3">Preferences existing does not mean the stack is running. Always run health after.</check>
   </gate>
 
   <skip-path>
-    <offer>Offer this BEFORE asking anything: "I can set up OpenFable with a local database and local embeddings — nothing to configure, no API keys. Or I can ask two questions to point it at infrastructure you already have."</offer>
-    <action>On skip, generate the all-local template, write preferences.json with skipped: true, and proceed. Never ask again.</action>
-    <note>`setup` re-runs the interview later with current values as defaults.</note>
+    <offer>Offer before asking: local database and local embeddings, nothing to configure — or two questions to use existing infrastructure.</offer>
+    <action>Generate all-local, write preferences.json with skipped=true, proceed. Do not ask again.</action>
   </skip-path>
 
   <question id="database" order="1" default="container">
-    <ask>Should OpenFable run its own PostgreSQL, or connect to one you already have?</ask>
-
-    <option value="container">A pgvector container, isolated to this project directory. Nothing to configure.</option>
-
+    <ask>Run PostgreSQL as a container, or connect to an existing one?</ask>
+    <option value="container">pgvector container, scoped to this directory.</option>
     <option value="external" collects="OPENFABLE_DATABASE_URL">
-      <when>They have managed pgvector (Neon, Supabase, RDS, Cloud SQL) or a local server.</when>
-      <side-effect>Several project directories pointed at one database share a corpus. This is how to opt into a shared corpus rather than the per-directory default.</side-effect>
-      <validate id="reachable">Connect with the supplied URL before writing anything. Managed providers usually need ?sslmode=require.</validate>
-      <validate id="extensions">Confirm `vector` and `ltree` are installed, or creatable by this role. CREATE EXTENSION typically needs superuser and managed providers vary — fail here rather than at first ingest.</validate>
-      <consent id="migrations">State plainly that migrations will CREATE TABLES in a database they own, and get agreement before proceeding.</consent>
+      <validate id="reachable">Connect before writing anything. Managed providers usually need ?sslmode=require.</validate>
+      <validate id="extensions">`vector` and `ltree` must exist or be creatable by this role. CREATE EXTENSION usually needs superuser. Fail here, not at first ingest.</validate>
+      <consent id="migrations">Migrations CREATE TABLES in a database the user owns. Get explicit agreement.</consent>
+      <side-effect>Directories sharing a database share a corpus. Default is one corpus per directory.</side-effect>
     </option>
   </question>
 
   <question id="embeddings" order="2" default="container">
-    <ask>Should OpenFable run its own embedding server, or use an endpoint you already have?</ask>
-
-    <option value="container">A local TEI container serving bge-m3. Downloads ~2GB once, then runs offline. No key.</option>
-
+    <ask>Run an embedding server as a container, or use an existing endpoint?</ask>
+    <option value="container">TEI serving bge-m3. Downloads ~2GB once, then offline.</option>
     <option value="external" collects="OPENFABLE_EMBEDDING_URL,OPENFABLE_EMBEDDING_MODEL,OPENFABLE_EMBEDDING_API_KEY">
-      <when>They already run TEI, vLLM or Ollama, or want OpenAI embeddings.</when>
       <validate id="responds">POST a probe to /v1/embeddings before writing anything.</validate>
-      <validate id="dimensions">The returned vector MUST be 1024 long. The column is fixed at that size, so a mismatch fails every insert. text-embedding-3-small truncates to 1024; -3-large at 3072 does not fit.</validate>
-      <validate id="corpus-conflict">If a corpus already exists and the model differs from preferences.embeddings.model, WARN LOUDLY. Stored vectors are from the old model and retrieval silently degrades — nothing errors. Re-index rather than mixing.</validate>
+      <validate id="dimensions">Returned vector length MUST be 1024; the column is fixed. text-embedding-3-small truncates to 1024; -3-large at 3072 does not fit.</validate>
+      <validate id="corpus-conflict">If a corpus exists and the model differs from preferences.embeddings.model, warn and offer re-index. Old vectors stay in the old model's space; retrieval degrades with no error.</validate>
     </option>
   </question>
 
-  <not-asked>
-  Do not collect behavioural preferences here. A user cannot sensibly choose a
-  default token budget before running a query. Deployment config is the only
-  thing needed up front, because it is the only thing that cannot be changed
-  for free afterwards.
-  </not-asked>
+  <not-asked>Behavioural preferences (token budget, vector_only). Deployment config only — it is the part that cannot be changed for free later.</not-asked>
 
   <template-selection>
     <template name="all-local" when="database=container AND embeddings=container"/>
@@ -73,28 +60,25 @@ No LLM API key is involved — embeddings run in a local container.
 
   <outputs directory=".openfable/">
     <file name="docker-compose.yml" from="assets/compose-{template}.yml">
-    Substitute __PROJECT__ with the project directory name. Every project's file
-    lives in a directory called .openfable, so without this each would derive
-    the same compose project and one project's `up` would recreate another's
-    containers.
+    Replace __PROJECT__ with the project directory name. Required: every copy
+    lives in a directory named .openfable, so unnamed projects all collide and
+    one `up` recreates another's containers.
     </file>
     <file name=".env" from="assets/env.example">
-    Write the BASE block plus the blocks for the chosen template. Do not rely on
-    omission — the code defaults target the hosted server, so an empty .env
-    sends a local stack to OpenAI and fails with 401.
+    Write the BASE block plus the chosen template's blocks. Never rely on
+    omission: OPENFABLE_EMBEDDING_URL defaults to https://api.openai.com, so an
+    empty .env sends a local stack to OpenAI and fails 401.
     </file>
     <file name="preferences.json" from="assets/preferences.example.json">
-    Record the template, both answers, and the embedding model and dimensions,
-    so a later change can be detected.
+    Record skill_version, compose_template, both answers, and
+    embeddings.{model,dimensions} so a later change is detectable.
     </file>
-    <file name=".gitignore" content=".env">
-    Written every time. Without it a managed-database password gets committed.
-    </file>
+    <file name=".gitignore" content=".env">Always. Prevents committing a database password.</file>
   </outputs>
 </onboarding>
 
 <setup>
-  <precondition>.openfable/ exists. If not, run onboarding first.</precondition>
+  <precondition>.openfable/ exists, else run onboarding.</precondition>
 
   <invoke><![CDATA[
 OF="docker compose -f .openfable/docker-compose.yml"
@@ -104,38 +88,21 @@ $OF exec openfable openfable health
 
   <expect>{"status": "healthy", "components": {"database": "healthy", "embeddings": "healthy"}}</expect>
 
-  <note topic="first-run">
-  The bge-m3 model downloads on first start (~2 min). Until it finishes, health
-  reports embeddings: unhealthy. Wait and re-run; do not proceed.
-  </note>
+  <note topic="first-run">bge-m3 downloads on first start (~2 min). health reports embeddings unhealthy until it completes. Wait; do not proceed.</note>
+  <note topic="paths">The invoking directory mounts read-only at /work. ./spec.md is /work/spec.md. Override with absolute OPENFABLE_WORKDIR.</note>
 
-  <note topic="working-directory">
-  Run from the directory holding your documents. It mounts read-only at /work,
-  so ./spec.md is /work/spec.md inside the container. Override with an absolute
-  OPENFABLE_WORKDIR.
-  </note>
-
-  <invariant id="one-json-object">
-  Every command prints exactly one JSON object to stdout. Failure prints
-  {"error": "..."} and exits non-zero.
-  </invariant>
-
-  <invariant id="retry-in-place">
-  On error, correct your input and re-run the SAME step. Never restart the
-  workflow. A rejected step persists nothing.
-  </invariant>
+  <invariant id="output">One JSON object on stdout per command. Failure: {"error": "..."} and exit 1.</invariant>
+  <invariant id="retry">On error, fix the input and re-run the SAME step. A rejected step persists nothing.</invariant>
+  <invariant id="tty">Commands reading stdin require `exec -T`. Without it docker allocates a TTY and stdin never arrives.</invariant>
 </setup>
 
 <workflow name="index-document">
   <preconditions>
-    <precondition>health reports status: healthy</precondition>
-    <precondition>You have read the document yourself and understand its structure.</precondition>
+    <precondition>health is healthy</precondition>
+    <precondition>You have read the document and know its structure.</precondition>
   </preconditions>
 
-  <description>
-  Three ordered steps. Each consumes the previous step's output — you cannot
-  skip or reorder. The document is NOT queryable until step 3 returns.
-  </description>
+  <description>Three ordered steps; each consumes the previous output. Not queryable until step 3 returns.</description>
 
   <step id="1" name="plan" produces="document_id">
     <invoke><![CDATA[
@@ -143,71 +110,80 @@ $OF exec -T openfable openfable plan /work/spec.md
     ]]></invoke>
 
     <returns>
-      <field name="document_id">Required by steps 2 and 3. Carry it forward.</field>
-      <field name="token_count">Total size of the document.</field>
-      <field name="reingest">True if this exact content was indexed before; the old index is cleared and rebuilt.</field>
+      <field name="document_id" type="uuid">Required by steps 2 and 3.</field>
+      <field name="token_count" type="int">Whole-document token count.</field>
+      <field name="content_hash" type="sha256">Identity key. Re-planning identical bytes reuses the row.</field>
+      <field name="reingest" type="bool">True when content_hash already existed; chunks, nodes and embeddings are cleared first.</field>
     </returns>
 
     <errors>
-      <error match="No such file" retry="step-1">
-      The path is wrong. It must be /work/..., not a host path.
-      Check what is mounted: $OF exec openfable ls /work
-      </error>
+      <error match="No such file" retry="step-1">Path must be under /work. List it: $OF exec openfable ls /work</error>
     </errors>
   </step>
 
   <step id="2" name="apply-chunks" requires="document_id" produces="chunk_index-set">
-    <agent_task>
-    Choose the chunk boundaries. Split where the TOPIC CHANGES, not at a fixed
-    size. Each chunk covers one idea and begins at a sentence or heading.
+    <agent_task>Split where the topic changes, not at a fixed size. One chunk per idea, beginning at a sentence or heading.</agent_task>
 
-    Produce a JSON array of the verbatim opening snippet of each chunk, in
-    document order — roughly 5–10 words each, enough to be unique. You supply
-    openings, not character offsets. Text before the first marker becomes its
-    own chunk, so you may start at the second boundary.
-    </agent_task>
+    <input type="json-array-of-string">
+    The verbatim opening of each chunk, in document order. Roughly 5-10 words —
+    long enough to be unique. Offsets are computed from these; never supply them.
+    </input>
+
+    <marker-rules>
+      <rule id="verbatim">Matched literally first. Characters must match exactly: an em-dash is not a hyphen.</rule>
+      <rule id="whitespace">Falls back to a whitespace-tolerant match, so differing line breaks or repeated spaces still resolve.</rule>
+      <rule id="order">Each search starts after the previous match. Markers must be in document order; a backwards marker cannot resolve.</rule>
+      <rule id="repeats">A phrase occurring twice resolves to successive occurrences, not the same one.</rule>
+      <rule id="leading-text">If the first marker is not at offset 0, the text before it becomes chunk 0. You may start at the second boundary.</rule>
+      <rule id="whitespace-only">Chunks that are entirely whitespace are dropped.</rule>
+      <rule id="atomic">Re-send the whole array when correcting. Not incremental.</rule>
+    </marker-rules>
 
     <invoke><![CDATA[
-DOC_ID=<the document_id from step 1>
+DOC_ID=<document_id from step 1>
 echo '["# Project Chimera", "## Section 2: Neural Mapping", "#### 2.2.1 Measurement Methodology"]' \
   | $OF exec -T openfable openfable apply-chunks "$DOC_ID" -
     ]]></invoke>
 
-    <constraints>
-      <constraint id="stdin">The trailing `-` reads stdin. /work is read-only, so there is nowhere to write a temp file.</constraint>
-      <constraint id="no-tty">`exec -T` is required. Without it docker allocates a TTY and stdin never reaches the command.</constraint>
-      <constraint id="all-or-nothing">Re-send the whole array when correcting. This step is not incremental.</constraint>
-    </constraints>
-
     <returns>
-      <field name="chunk_count">Number of chunks created.</field>
-      <field name="chunks[].chunk_index">The exact set step 3 must cover.</field>
-      <field name="chunks[].token_count">Chunk size. A chunk larger than your query budget can never be returned at that budget.</field>
-      <field name="chunks[].preview">First 160 characters, to confirm boundaries landed where you intended.</field>
+      <field name="chunk_count" type="int"/>
+      <field name="chunks[].chunk_index" type="int">0-based, document order. Step 3 must cover this exact set.</field>
+      <field name="chunks[].token_count" type="int">A chunk larger than a query budget can never be returned at that budget.</field>
+      <field name="chunks[].preview" type="string">First 160 chars. Confirm boundaries landed as intended.</field>
     </returns>
 
     <errors>
-      <error match="Boundary marker N not found at or after offset X" retry="step-2">
-      That marker is not verbatim, or is out of document order. The message
-      quotes the offending marker. Copy the text out of the file exactly.
-      </error>
+      <error match="Boundary marker N not found at or after offset X" retry="step-2">Not verbatim, or out of order. The message quotes the marker. Copy it from the file exactly.</error>
     </errors>
   </step>
 
   <step id="3" name="apply-tree" requires="chunk_index-set" produces="indexed">
     <agent_task>
-    Organise the chunk_index values from step 2 into a hierarchy. Internal
-    nodes carry a title and a summary. The summary is what retrieval searches
-    over — describe what the subtree SAYS, not that it exists. Write "Synapse
-    integration rates and measured latency figures", not "This section covers
-    neural mapping".
+    Group the chunk_index values into a hierarchy. Summaries are embedded and
+    searched: state what the subtree SAYS. "Synapse integration rates and
+    measured latency figures", not "This section covers neural mapping".
     </agent_task>
 
+    <schema>
+      <node type="internal">
+        <field name="type" const="internal"/>
+        <field name="node_type" enum="root|section|subsection"/>
+        <field name="title" type="string" constraint="non-empty"/>
+        <field name="summary" type="string" constraint="non-empty"/>
+        <field name="children" type="array">internal or leaf nodes</field>
+      </node>
+      <node type="leaf">
+        <field name="type" const="leaf"/>
+        <field name="chunk_index" type="int"/>
+      </node>
+      <root>Top-level object is {"root": INTERNAL_NODE}.</root>
+    </schema>
+
     <rules>
-      <rule>node_type is one of: root, section, subsection.</rule>
-      <rule>Maximum depth 4 (root=1, section=2, subsection=3, leaf=4).</rule>
-      <rule>Every chunk_index from step 2 appears exactly once as a leaf.</rule>
-      <rule>Not every chunk needs a section wrapper; leaves may hang off the root.</rule>
+      <rule id="coverage">Every chunk_index from step 2 appears exactly once. Gaps and duplicates are rejected by index.</rule>
+      <rule id="depth">Depth 4 max (root=1, section=2, subsection=3, leaf=4). Deeper nodes are NOT rejected — they are re-parented to their grandparent and a warning is logged. Choose the collapse yourself rather than letting it happen.</rule>
+      <rule id="flat-ok">Leaves may hang directly off the root; not every chunk needs a section.</rule>
+      <rule id="paths">toc_path is computed from ancestor titles. Never supply it.</rule>
     </rules>
 
     <invoke><![CDATA[
@@ -226,24 +202,22 @@ JSON
     ]]></invoke>
 
     <returns>
-      <field name="nodes_embedded">Total nodes written and embedded.</field>
-      <field name="status">"indexed" — the document is now queryable.</field>
+      <field name="nodes_embedded" type="int">Internal nodes plus leaves.</field>
+      <field name="status" const="indexed"/>
     </returns>
 
     <errors>
       <error match="Missing chunk indexes: [2, 3]" retry="step-3">Add those leaves.</error>
-      <error match="Duplicate chunk_index values found" retry="step-3">A chunk appears twice; each may appear only once.</error>
-      <error match="Tree does not match the expected schema" retry="step-3">A node is malformed. Check node_type is root/section/subsection and every leaf has both "type" and "chunk_index".</error>
+      <error match="Duplicate chunk_index values found" retry="step-3">Each index may appear once.</error>
+      <error match="Tree does not match the expected schema" retry="step-3">Malformed node. Check node_type against the enum and that every leaf has type and chunk_index.</error>
     </errors>
   </step>
 
-  <postcondition>The document is queryable. Verify with: $OF exec openfable openfable list</postcondition>
+  <postcondition>Queryable. Verify: $OF exec openfable openfable list</postcondition>
 </workflow>
 
 <workflow name="query">
-  <preconditions>
-    <precondition>At least one document has completed index-document.</precondition>
-  </preconditions>
+  <preconditions><precondition>At least one document indexed.</precondition></preconditions>
 
   <step id="1" name="query">
     <invoke><![CDATA[
@@ -251,123 +225,65 @@ $OF exec openfable openfable query "which env var sets the embedding model" --bu
     ]]></invoke>
 
     <constraints>
-      <constraint id="vector-only">
-      Always pass --vector-only on this stack. No LLM is configured; without it
-      the LLM paths are attempted, fail, and fall back to vector search anyway
-      — same result, slower, plus stderr noise.
-      </constraint>
+      <constraint id="vector-only">Always pass --vector-only. No LLM is configured; without it the LLM paths are attempted, fail, and fall back to the same vector result — slower, with stderr noise.</constraint>
     </constraints>
 
     <budgets min="100" max="32000" default="2000">
       <budget range="150-500" use-for="one specific buried fact"/>
-      <budget range="2000" use-for="a question about one topic"/>
-      <budget range="8000+" use-for="cross-document synthesis, comparing sources"/>
-      <tuning>Start at 2000. Narrow if you get noise, widen if the answer looks truncated.</tuning>
+      <budget range="2000" use-for="one topic"/>
+      <budget range="8000+" use-for="cross-document synthesis"/>
+      <tuning>Start at 2000. Narrow on noise, widen on truncation.</tuning>
     </budgets>
 
     <response_fields>
-      <field name="routing" value="document_level">Whole documents fit the budget. Read `documents`; `chunks` is absent.</field>
-      <field name="routing" value="node_level">It drilled into the tree. Read `chunks` and `node_results`, which carry scores.</field>
-      <field name="over_budget" value="true">The budget could not fit even the top result. Raise it and re-query rather than interpreting a truncated answer.</field>
-      <field name="total_tokens_used">How much of the budget was actually spent.</field>
+      <field name="routing" value="document_level">Whole documents fit. Read `documents`; `chunks` absent.</field>
+      <field name="routing" value="node_level">Drilled into the tree. Read `chunks` and `node_results`, which carry score and depth.</field>
+      <field name="over_budget" type="bool">True means the budget could not fit even the top result. Raise and re-query.</field>
+      <field name="total_tokens_used" type="int">Budget actually spent.</field>
     </response_fields>
 
     <caveat id="cross-document-ranking">
-    Node scores ARE globally comparable — they are min-max normalised across
-    every candidate leaf at once. The distortion is upstream of that.
+    S(v) = 1/3[S_sim + S_inh + S_child]. For a leaf: S_child=0,
+    S_sim = cosine/depth, S_inh = highest ancestor S_sim. Root depth is 1, so
+    the root's similarity enters undivided and every leaf inherits it.
 
-    FABLE is bi-path: an LLM picks the documents, and structure-aware scoring
-    recovers passages within that selection. --vector-only removes the LLM
-    path, so the structural score alone has to do document selection, which it
-    was not designed to do unaided.
+    Across documents, ranking therefore follows document-root similarity more
+    than chunk relevance, and a LARGER budget pulls in more of another
+    document's chunks. Narrow, do not widen, when results are plausible but
+    wrong. Within one document S_inh is constant and cancels, so ranking is
+    normal — keep building hierarchy.
 
-    Scoring is S(v) = 1/3[S_sim + S_inh + S_child]; a leaf has no children, so
-    S_child is 0. S_sim is the leaf's own similarity divided by its depth.
-    S_inh is the highest ancestor S_sim, and the root sits at depth 1, so the
-    root's similarity enters undivided and is inherited identically by every
-    leaf beneath it. S_inh therefore acts as a per-document constant that can
-    outweigh what the chunk itself says.
-
-    Measured on a real corpus: a chunk with cosine 0.5873 at depth 3 scored
-    0.1655, losing to a chunk with cosine 0.3355 at depth 2 that scored 0.2064,
-    purely because its document root scored 0.3007 against the other's 0.4514.
-
-    Consequences, in order of how often they bite:
-      - ACROSS documents, ranking follows document-root similarity more than
-        chunk relevance. Trust the document-level result; treat node scores as
-        reliable only within one document.
-      - A LARGER budget can pull in another document's chunks ahead of the
-        answer. If a query returns plausible-but-wrong content, narrow the
-        budget rather than widening it.
-      - WITHIN one document all leaves inherit the same root value, so it
-        cancels and ranking behaves normally. Building proper hierarchy is
-        still correct — do not flatten trees to game this.
+    Faithful to arXiv:2601.18116v1 §3.2. Surfaces only because --vector-only
+    removes the LLM document-selection path.
     </caveat>
   </step>
 </workflow>
 
 <commands prefix="$OF exec [-T] openfable openfable">
   <command name="plan" args="PATH">Register a document; returns document_id.</command>
-  <command name="apply-chunks" args="DOC_ID -" stdin="required">Persist chunk boundaries. Needs exec -T.</command>
-  <command name="apply-tree" args="DOC_ID -" stdin="required">Persist tree, then embed. Needs exec -T.</command>
-  <command name="query" args="TEXT --budget N [--vector-only]">Bi-path retrieval within a token budget.</command>
-  <command name="list">What is indexed.</command>
-  <command name="get" args="DOC_ID [--meta-only]">One document.</command>
+  <command name="apply-chunks" args="DOC_ID -" stdin="required">Persist boundaries.</command>
+  <command name="apply-tree" args="DOC_ID -" stdin="required">Persist tree, then embed.</command>
+  <command name="query" args="TEXT --budget N [--vector-only]">Retrieval within a token budget.</command>
+  <command name="list">Indexed documents with id, hash, token_count.</command>
+  <command name="get" args="DOC_ID [--meta-only]">One document; --meta-only omits content.</command>
   <command name="health">Database and embedding server.</command>
-  <command name="index" args="PATH" available="false">Full LiteLLM ingest. NOT available here — no LLM is configured.</command>
+  <command name="index" args="PATH" available="false">LiteLLM ingest. Unavailable here — no LLM configured.</command>
 </commands>
 
 <examples location="scripts/">
-  <instruction>Read the ONE example matching your situation. Do not read them all.</instruction>
-
-  <example file="scripts/01-simple-document.sh" complexity="simple">
-    <journey>Index one short, flat document. The minimal complete case.</journey>
-    <read-when>You have not indexed before. Everything else varies these three steps.</read-when>
-  </example>
-
-  <example file="scripts/02-query-existing-corpus.sh" complexity="simple">
-    <journey>Query without indexing, and how one question behaves across budgets.</journey>
-    <read-when>Before indexing anything — the corpus may already hold the answer.</read-when>
-  </example>
-
-  <example file="scripts/03-nested-document.sh" complexity="medium">
-    <journey>Mapping heading depth onto root/section/subsection, and choosing which level to collapse when a document nests past the depth-4 cap.</journey>
-    <read-when>The document nests more than two levels.</read-when>
-  </example>
-
-  <example file="scripts/04-error-recovery.sh" complexity="medium">
-    <journey>Both failure modes worked through: a non-verbatim marker, and a tree with missing chunk indexes.</journey>
-    <read-when>A step returned {"error": ...}.</read-when>
-  </example>
-
-  <example file="scripts/05-multi-document-synthesis.sh" complexity="complex">
-    <journey>Two documents that disagree, and retrieving across both so the contradiction is visible.</journey>
-    <read-when>The answer spans documents, or sources may conflict.</read-when>
-  </example>
-
-  <example file="scripts/06-chunk-granularity.sh" complexity="complex">
-    <journey>Why a fact inside a 298-token chunk is unreachable at a 140-token budget, and how boundary placement fixes it.</journey>
-    <read-when>Retrieval returns something related but not the fact you asked for.</read-when>
-  </example>
-
-  <index file="references/JOURNEYS.md">Lists these and records two behaviours worth knowing before interpreting any output.</index>
+  <instruction>Read the ONE example matching the situation, not all of them.</instruction>
+  <example file="scripts/01-simple-document.sh" complexity="simple" read-when="first time indexing">One short flat document; the minimal case.</example>
+  <example file="scripts/02-query-existing-corpus.sh" complexity="simple" read-when="before indexing anything">Query only, and budget behaviour.</example>
+  <example file="scripts/03-nested-document.sh" complexity="medium" read-when="document nests past two levels">Heading depth to node_type, and choosing which level to collapse.</example>
+  <example file="scripts/04-error-recovery.sh" complexity="medium" read-when="a step returned an error">Non-verbatim marker and missing chunk indexes, both recovered.</example>
+  <example file="scripts/05-multi-document-synthesis.sh" complexity="complex" read-when="answer spans sources">Two documents that disagree.</example>
+  <example file="scripts/06-chunk-granularity.sh" complexity="complex" read-when="retrieval returns related but wrong content">Why a 298-token chunk is unreachable at a 140-token budget.</example>
+  <index file="references/JOURNEYS.md">Indexes the above; records behaviours affecting how output should be read.</index>
 </examples>
 
 <usage_guidance>
-  <guidance id="check-first">
-  Run `list` before indexing. The corpus may already hold what you need, and
-  re-indexing identical content is wasted work (it returns reingest: true).
-  </guidance>
-
-  <guidance id="dont-over-reach">
-  Indexing costs real work per document. Do not use OpenFable for a file you
-  can simply read, or for a known string you could grep.
-  </guidance>
-
-  <guidance id="where-it-pays">
-  It earns its cost on documents too long to hold at once, questions spanning
-  several sections, and repeated queries against a stable corpus.
-  </guidance>
+  <guidance id="check-first">Run `list` before indexing; the corpus may already hold the answer. Re-indexing identical bytes returns reingest=true and rebuilds from scratch.</guidance>
+  <guidance id="scope">Not for a file you can read directly, or a string you could grep. It pays on documents too long to hold at once, questions spanning sections, and repeated queries against a stable corpus.</guidance>
 </usage_guidance>
 
 </skill>
