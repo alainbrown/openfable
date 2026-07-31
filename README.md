@@ -7,7 +7,50 @@ An open-source retrieval engine implementing [FABLE](https://arxiv.org/abs/2601.
 
 ![OpenFable demo — ingest a document and query it](demo/demo.gif)
 
-## Quickstart
+## Agents start here
+
+OpenFable is a Claude Code plugin. Install it once and the skill is available in every project:
+
+```
+/plugin marketplace add alainbrown/openfable
+/plugin install openfable@openfable
+```
+
+Then, from a directory holding documents, ask for what you actually want:
+
+> Index ./spec.md with OpenFable, then tell me what it says about rate limits.
+
+**You do the indexing reasoning.** OpenFable does not chunk documents for you. You read the document, decide where the topic changes, and build the tree; it persists, embeds, scores, and enforces the token budget. That division is the reason no LLM API key is needed — you are the model.
+
+**First run onboards you once.** Two questions about where PostgreSQL and embeddings should live, or skip them and take local containers for both. It writes a `.openfable/` directory into your working directory:
+
+```
+.openfable/
+├── docker-compose.yml    generated to match your answers
+├── preferences.json      the gate — commit this
+├── .env                  URLs and keys — gitignored for you
+└── .gitignore
+```
+
+`preferences.json` existing is what stops you being asked again. Answer the questions rather than skipping if you have a managed pgvector instance (Neon, Supabase, RDS) or an existing embeddings endpoint — onboarding validates before it writes anything: reachability, the `vector` and `ltree` extensions, and that your endpoint returns 1024-dimension vectors. Pointing several projects at one database is also how you share a corpus between them; the default is one corpus per directory.
+
+**Indexing is a three-step handshake.** Each step consumes the previous step's output, so they cannot be reordered or skipped:
+
+| Step | Command | Produces |
+|------|---------|----------|
+| 1 | `openfable plan <path>` | `document_id` |
+| 2 | `openfable apply-chunks <id> -` | the `chunk_index` set |
+| 3 | `openfable apply-tree <id> -` | an indexed, queryable document |
+
+Every command prints exactly one JSON object. A failure prints `{"error": "..."}` and exits non-zero with a message naming what to fix — correct your input and re-run *the same step*. A rejected step persists nothing, so there is no partial state to clean up.
+
+**Read [`skills/openfable/SKILL.md`](skills/openfable/SKILL.md) before your first index.** It is the authoritative contract: onboarding, both workflows step by step, the error strings and what each means, and how to pick a token budget. Six runnable worked examples live in [`skills/openfable/scripts/`](skills/openfable/scripts/) — read the one matching your situation rather than all of them, and start with `01-simple-document.sh`.
+
+> Requires the published container image, so install from a tagged release rather than a bare `main` checkout.
+
+## Running as a server — REST + MCP
+
+Reproducible indexing (`temperature=0`, pinned model) driven by an LLM you configure, reachable from any language or MCP client.
 
 ```bash
 export OPENAI_API_KEY=sk-...
@@ -98,17 +141,24 @@ The result: you get the most relevant chunks, in document order, within your tok
 ```mermaid
 flowchart LR
     client([Developer / RAG App])
+    agent([Coding agent])
     api["OpenFable API<br/>FastAPI + Python 3.12"]
+    cli["OpenFable CLI<br/>same services, no HTTP"]
     db["PostgreSQL 17<br/>+ pgvector"]
     embeddings["Embeddings<br/>TEI / OpenAI"]
     llm["LLM Provider<br/>Anthropic / OpenAI / Ollama"]
 
     client -- "REST /v1/api" --> api
     client -- "MCP /v1/mcp" --> api
+    agent -- "docker exec" --> cli
     api -- "SQLAlchemy" --> db
+    cli -- "SQLAlchemy" --> db
     api -- "/v1/embeddings" --> embeddings
+    cli -- "/v1/embeddings" --> embeddings
     api -- "LiteLLM" --> llm
 ```
+
+Both surfaces call the same ingestion and retrieval services and share one database — the agent supplies chunking and tree structure directly, where the server path asks an LLM for them.
 
 ## Configuration
 
@@ -169,6 +219,28 @@ For Claude Desktop, add to your `claude_desktop_config.json`:
 ```
 
 For other MCP clients, connect to `http://localhost:8000/v1/mcp/sse`.
+
+### CLI (agent stack)
+
+Runs inside the generated stack's container:
+
+```bash
+docker compose -f .openfable/docker-compose.yml exec -T openfable openfable <command>
+```
+
+Every command prints one JSON object; failures print `{"error": ...}` and exit non-zero. `-T` is required for the commands that read stdin.
+
+| Command | Description |
+|---------|-------------|
+| `plan <path>` | Register a document; returns its `document_id` |
+| `apply-chunks <id> <markers>` | Persist chunk boundaries given as verbatim opening snippets. `-` reads stdin |
+| `apply-tree <id> <tree>` | Persist the node tree, then embed. `-` reads stdin |
+| `query <text> --budget N` | Bi-path retrieval. `--vector-only` skips the LLM paths |
+| `index <path>` | Full LiteLLM ingest — the server-equivalent path, needs an LLM configured |
+| `list` / `get <id>` | Inspect the corpus |
+| `health` | Check database and embedding server |
+
+Indexing is a three-step handshake because the LLM reasoning happens outside the process. See [`SKILL.md`](skills/openfable/SKILL.md) for the full flow.
 
 ## When to Use OpenFable
 
