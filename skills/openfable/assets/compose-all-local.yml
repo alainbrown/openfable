@@ -1,0 +1,55 @@
+# TEMPLATE: everything local. The default, and the answer to both onboarding
+# questions being "yours". Nothing to configure, no accounts, no keys.
+#
+# Substitute __PROJECT__ with the user's project directory name, then write to
+# .openfable/docker-compose.yml. The name must be unique per project directory:
+# the file lives in .openfable/ in every project, so without an explicit name
+# compose would derive "openfable" for all of them and one project's `up` would
+# recreate another's containers.
+name: openfable-__PROJECT__
+
+services:
+  openfable:
+    image: ghcr.io/alainbrown/openfable:latest
+    command: ["sh", "-c", "cd /app && .venv/bin/alembic upgrade head && exec sleep infinity"]
+    env_file: .env
+    volumes:
+      - ${OPENFABLE_WORKDIR:-..}:/work:ro
+    working_dir: /work
+    depends_on:
+      db:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: openfable
+      POSTGRES_PASSWORD: openfable
+      POSTGRES_DB: openfable
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfable -d openfable"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: --model-id BAAI/bge-m3
+    volumes:
+      - tei-models:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # First run downloads ~2GB of ONNX weights before the port binds.
+      start_period: 600s
+
+volumes:
+  pgdata:
+  tei-models:

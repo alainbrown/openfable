@@ -1,0 +1,51 @@
+# TEMPLATE: the user brings their own embeddings endpoint; PostgreSQL stays local.
+#
+# Use when they already run TEI, vLLM or Ollama, or want OpenAI embeddings.
+# Any OpenAI-compatible /v1/embeddings endpoint works.
+#
+# Substitute __PROJECT__ with the project directory name. The endpoint URL,
+# model and key go in .env.
+#
+# BEFORE GENERATING THIS, probe the endpoint and check:
+#   * it responds to POST /v1/embeddings
+#   * the returned vector length matches the schema, which is fixed at 1024
+#     (models/node.py, alembic 0001). bge-m3 and text-embedding-3-small with
+#     dimensions=1024 both fit; text-embedding-3-large at 3072 does NOT and
+#     every insert will fail.
+#   * OpenAI-style providers need OPENFABLE_EMBEDDING_SEND_DIMENSIONS=true to
+#     truncate; TEI serves its native size and does not take the field.
+#
+# IF A CORPUS ALREADY EXISTS, changing embedding model silently degrades
+# retrieval — stored vectors are from the old model and nothing errors. Warn
+# before switching, and re-index rather than mixing.
+name: openfable-__PROJECT__
+
+services:
+  openfable:
+    image: ghcr.io/alainbrown/openfable:latest
+    command: ["sh", "-c", "cd /app && .venv/bin/alembic upgrade head && exec sleep infinity"]
+    env_file: .env
+    volumes:
+      - ${OPENFABLE_WORKDIR:-..}:/work:ro
+    working_dir: /work
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: openfable
+      POSTGRES_PASSWORD: openfable
+      POSTGRES_DB: openfable
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfable -d openfable"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:

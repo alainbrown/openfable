@@ -1,0 +1,22 @@
+{
+  "name": "openfable",
+  "owner": {
+    "name": "Alain Brown",
+    "url": "https://github.com/alainbrown"
+  },
+  "metadata": {
+    "description": "Agent-driven retrieval over long documents",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "openfable",
+      "description": "Index specs, papers and manuals into a semantic forest and query them within a token budget. The agent supplies chunk boundaries and tree structure, so no LLM API key is needed.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/openfable"
+      ]
+    }
+  ]
+}

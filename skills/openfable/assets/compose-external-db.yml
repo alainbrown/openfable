@@ -1,0 +1,44 @@
+# TEMPLATE: the user brings their own PostgreSQL; embeddings stay local.
+#
+# Use when they have a managed pgvector instance (Neon, Supabase, RDS, Cloud
+# SQL) or a local server they already run. Several project directories pointed
+# at the same database share one corpus — that is the way to opt into a shared
+# corpus rather than the per-directory default.
+#
+# Substitute __PROJECT__ with the project directory name. OPENFABLE_DATABASE_URL
+# goes in .env, never here — it carries a password.
+#
+# BEFORE GENERATING THIS, verify against their database:
+#   * reachable with the supplied credentials
+#   * `vector` and `ltree` extensions present, or creatable by this role
+#     (CREATE EXTENSION usually needs superuser; managed providers vary)
+#   * they understand migrations will create tables in a database they own
+name: openfable-__PROJECT__
+
+services:
+  openfable:
+    image: ghcr.io/alainbrown/openfable:latest
+    command: ["sh", "-c", "cd /app && .venv/bin/alembic upgrade head && exec sleep infinity"]
+    env_file: .env
+    volumes:
+      - ${OPENFABLE_WORKDIR:-..}:/work:ro
+    working_dir: /work
+    depends_on:
+      embeddings:
+        condition: service_healthy
+    restart: unless-stopped
+
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: --model-id BAAI/bge-m3
+    volumes:
+      - tei-models:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+volumes:
+  tei-models:

@@ -1,0 +1,23 @@
+# TEMPLATE: the user brings both PostgreSQL and embeddings. One container.
+#
+# The lightest option — nothing to download, no local state. Suits a team
+# sharing one corpus on managed infrastructure, or CI.
+#
+# Substitute __PROJECT__ with the project directory name. All connection
+# details live in .env.
+#
+# Apply the checks from BOTH external-db.yml and external-embeddings.yml before
+# generating this: database reachability, vector + ltree, migration consent,
+# embedding endpoint probe, vector length 1024, and the existing-corpus warning
+# if the embedding model is changing.
+name: openfable-__PROJECT__
+
+services:
+  openfable:
+    image: ghcr.io/alainbrown/openfable:latest
+    command: ["sh", "-c", "cd /app && .venv/bin/alembic upgrade head && exec sleep infinity"]
+    env_file: .env
+    volumes:
+      - ${OPENFABLE_WORKDIR:-..}:/work:ro
+    working_dir: /work
+    restart: unless-stopped
