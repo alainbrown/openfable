@@ -60,6 +60,44 @@ uv run ruff format --check src/ tests/
 uv run mypy src/
 ```
 
+## Working on the skill
+
+The Claude Code plugin lives in `skills/openfable/`, with manifests in
+`.claude-plugin/`. Nothing in CI covers it, so check changes by hand.
+
+```bash
+claude plugin validate .
+```
+
+`SKILL.md` has a YAML frontmatter and an **XML body**. Keep it well-formed, keep
+`name` matching the directory, and keep the file under 500 lines — agents load
+it whole. Paths it references must stay one level deep, per the
+[Agent Skills spec](https://agentskills.io/specification).
+
+```bash
+python3 -c "
+import re, pathlib, xml.etree.ElementTree as ET
+raw = pathlib.Path('skills/openfable/SKILL.md').read_text()
+ET.fromstring(re.sub(r'^---\n.*?\n---\n', '', raw, count=1, flags=re.S))
+print('ok', raw.count(chr(10)) + 1, 'lines')"
+```
+
+The six scripts in `skills/openfable/scripts/` are runnable journeys that double
+as regression tests. They need a live stack, so onboard first (or generate
+`.openfable/` by hand from `skills/openfable/assets/compose-all-local.yml`),
+then:
+
+```bash
+bash -n skills/openfable/scripts/*.sh          # syntax only
+bash skills/openfable/scripts/01-simple-document.sh
+```
+
+Two things worth knowing before editing them. Error strings quoted in `SKILL.md`
+and in the scripts must match `src/openfable/` verbatim — they are the contract
+an agent retries against. And a failing `VAR=$(...)` does not trip `set -e`, so
+every command substitution capturing a `document_id` is followed by a
+`: "${VAR:?...}"` guard; keep them.
+
 ## Submitting changes
 
 1. Fork the repo and create a branch from `main`

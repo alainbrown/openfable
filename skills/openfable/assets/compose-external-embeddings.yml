@@ -12,8 +12,8 @@
 #     (models/node.py, alembic 0001). bge-m3 and text-embedding-3-small with
 #     dimensions=1024 both fit; text-embedding-3-large at 3072 does NOT and
 #     every insert will fail.
-#   * OpenAI-style providers need OPENFABLE_EMBEDDING_SEND_DIMENSIONS=true to
-#     truncate; TEI serves its native size and does not take the field.
+#   * `dimensions` is always sent, from OPENFABLE_EMBEDDING_DIMENSIONS. OpenAI
+#     v3 models use it to truncate; TEI ignores it.
 #
 # IF A CORPUS ALREADY EXISTS, changing embedding model silently degrades
 # retrieval — stored vectors are from the old model and nothing errors. Warn
