@@ -219,14 +219,47 @@ JSON
 <workflow name="query">
   <preconditions><precondition>At least one document indexed.</precondition></preconditions>
 
-  <step id="1" name="query">
+  <description>
+  Choose the documents, then query within them. You are doing the document
+  selection the service would otherwise ask an LLM to do — see the caveat on
+  step 2 for what happens when nothing does it.
+  </description>
+
+  <step id="1" name="candidates" optional="true" produces="document-selection">
+    <skip-when>The corpus holds one document, or you already know which document applies. Check with `list`.</skip-when>
+
     <invoke><![CDATA[
-$OF exec openfable openfable query "which env var sets the embedding model" --budget 2000 --vector-only
+$OF exec -T openfable openfable candidates
+    ]]></invoke>
+
+    <returns>
+      <field name="documents[].document_id" type="uuid"/>
+      <field name="documents[].token_count" type="int">Whole-document size. Below the budget means step 2 returns it entire.</field>
+      <field name="documents[].sections" type="array">toc_path and summary per internal node, down to depth 2 — the document's shallow table of contents.</field>
+    </returns>
+
+    <agent_task>
+    Pick the documents whose sections could answer the question. Judge on subject
+    overlap, not wording. Partial relevance counts — include a document covering
+    part of the question. Prefer too few over too many: each extra document adds
+    competing chunks.
+    </agent_task>
+  </step>
+
+  <step id="2" name="query" requires="document-selection">
+    <invoke><![CDATA[
+$OF exec openfable openfable query "which env var sets the embedding model" \
+  --budget 2000 --vector-only --documents <id>[,<id>...]
     ]]></invoke>
 
     <constraints>
       <constraint id="vector-only">Always pass --vector-only. No LLM is configured; without it the LLM paths are attempted, fail, and fall back to the same vector result — slower, with stderr noise.</constraint>
+      <constraint id="documents">Omitting --documents searches the whole corpus. Correct for a single-document corpus; for several documents see the caveat.</constraint>
     </constraints>
+
+    <errors>
+      <error match="Unknown document_id(s)" retry="step-2">An id is not in the corpus. The message names it. Re-check against `list` or `candidates`.</error>
+    </errors>
 
     <budgets min="100" max="32000" default="2000">
       <budget range="150-500" use-for="one specific buried fact"/>
@@ -243,18 +276,22 @@ $OF exec openfable openfable query "which env var sets the embedding model" --bu
     </response_fields>
 
     <caveat id="cross-document-ranking">
-    S(v) = 1/3[S_sim + S_inh + S_child]. For a leaf: S_child=0,
-    S_sim = cosine/depth, S_inh = highest ancestor S_sim. Root depth is 1, so
-    the root's similarity enters undivided and every leaf inherits it.
+    Why step 1 exists. S(v) = 1/3[S_sim + S_inh + S_child]. For a leaf:
+    S_child=0, S_sim = cosine/depth, S_inh = highest ancestor S_sim. Root depth
+    is 1, so the root's similarity enters undivided and every leaf inherits it.
 
-    Across documents, ranking therefore follows document-root similarity more
-    than chunk relevance, and a LARGER budget pulls in more of another
-    document's chunks. Narrow, do not widen, when results are plausible but
-    wrong. Within one document S_inh is constant and cancels, so ranking is
-    normal — keep building hierarchy.
+    Without a selection, ranking across documents therefore follows
+    document-root similarity more than chunk relevance, and a larger budget
+    pulls in more of another document's chunks. Within one document S_inh is
+    constant and cancels, so ranking is normal — which is what --documents
+    restores. Keep building hierarchy either way.
 
-    Faithful to arXiv:2601.18116v1 §3.2. Surfaces only because --vector-only
-    removes the LLM document-selection path.
+    Measured on a 4-document corpus: the answering chunk ranked 8th, behind
+    three chunks of an unrelated document. Selecting its document first
+    returned it as the whole document at the same budget.
+
+    Faithful to arXiv:2601.18116v1 §3.2. This is the algorithm running without
+    the document-selection step it assumes, not a defect.
     </caveat>
   </step>
 </workflow>
@@ -263,7 +300,8 @@ $OF exec openfable openfable query "which env var sets the embedding model" --bu
   <command name="plan" args="PATH">Register a document; returns document_id.</command>
   <command name="apply-chunks" args="DOC_ID -" stdin="required">Persist boundaries.</command>
   <command name="apply-tree" args="DOC_ID -" stdin="required">Persist tree, then embed.</command>
-  <command name="query" args="TEXT --budget N [--vector-only]">Retrieval within a token budget.</command>
+  <command name="candidates">Every document with its toc paths and summaries, for choosing before a query.</command>
+  <command name="query" args="TEXT --budget N [--vector-only] [--documents ID,ID]">Retrieval within a token budget, optionally restricted to chosen documents.</command>
   <command name="list">Indexed documents with id, hash, token_count.</command>
   <command name="get" args="DOC_ID [--meta-only]">One document; --meta-only omits content.</command>
   <command name="health">Database and embedding server.</command>

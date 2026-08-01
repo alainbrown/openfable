@@ -208,8 +208,16 @@ class RetrievalService:
         session: Session,
         query: str,
         token_budget: int,
+        document_ids: list[uuid.UUID] | None = None,
     ) -> QueryResponse:
-        """Full bi-path retrieval pipeline: embed → LLMselect + vector top-K → fuse → route."""
+        """Full bi-path retrieval pipeline: embed → LLMselect + vector top-K → fuse → route.
+
+        When document_ids is supplied, both document-level paths are skipped and
+        retrieval runs within exactly those documents, in the order given. This
+        is the caller-supplied equivalent of LLMselect: a caller that is itself
+        an LLM can read candidate summaries and choose, rather than having the
+        service call out to one. Node-level retrieval is unchanged.
+        """
         # Embed query
         try:
             vectors = self.embed.embed_batch([query])
@@ -217,21 +225,24 @@ class RetrievalService:
         except EmbeddingError as e:
             raise RetrievalError(f"Query embedding failed: {e}") from e
 
-        # Run both retrieval paths
-        llm_scores = self._llmselect(session, query)
-        vector_scores = self._vector_topk(session, query_vector)
+        if document_ids is not None:
+            fused = self._preselected(session, document_ids)
+        else:
+            # Run both retrieval paths
+            llm_scores = self._llmselect(session, query)
+            vector_scores = self._vector_topk(session, query_vector)
 
-        # Early return for empty corpus
-        if not llm_scores and not vector_scores:
-            return QueryResponse(
-                query=query,
-                routing="node_level",
-                total_tokens=0,
-                documents=[],
-            )
+            # Early return for empty corpus
+            if not llm_scores and not vector_scores:
+                return QueryResponse(
+                    query=query,
+                    routing="node_level",
+                    total_tokens=0,
+                    documents=[],
+                )
 
-        # Fuse results and route by budget
-        fused = self._fuse(llm_scores, vector_scores)
+            # Fuse results and route by budget
+            fused = self._fuse(llm_scores, vector_scores)
         doc_response = self._route(session, query, fused, token_budget)
 
         if doc_response.routing == "node_level" and doc_response.documents:
@@ -281,19 +292,7 @@ class RetrievalService:
         Returns dict mapping document_id -> relevance_score.
         LLM failure returns {} (vector path provides fallback).
         """
-        nodes = self.node_repo.find_internal_nodes_by_depth(
-            session, settings.retrieval_llmselect_depth
-        )
-
-        # Group by document_id with toc_path + summary per FABLE spec
-        sections_by_doc: dict[uuid.UUID, list[tuple[str, str]]] = {}
-        for node in nodes:
-            doc_id = node.document_id
-            if doc_id not in sections_by_doc:
-                sections_by_doc[doc_id] = []
-            toc = node.toc_path or node.title or "(root)"
-            summary = node.summary or "(no summary)"
-            sections_by_doc[doc_id].append((toc, summary))
+        sections_by_doc = self.document_abstractions(session)
 
         if not sections_by_doc:
             return {}
@@ -558,6 +557,70 @@ class RetrievalService:
             if document_id not in doc_scores or similarity > doc_scores[document_id]:
                 doc_scores[document_id] = similarity
         return doc_scores
+
+    def document_abstractions(
+        self,
+        session: Session,
+    ) -> dict[uuid.UUID, list[tuple[str, str]]]:
+        """Shallow table-of-contents view of every indexed document.
+
+        Internal nodes at depth <= retrieval_llmselect_depth, grouped by
+        document as (toc_path, summary) pairs per the FABLE spec.
+
+        This is the material LLMselect reasons over. Exposing it lets a caller
+        that is itself an LLM make the same judgement without a service-side
+        model call -- and because _llmselect uses this method too, the caller
+        sees exactly what it would have seen.
+        """
+        nodes = self.node_repo.find_internal_nodes_by_depth(
+            session, settings.retrieval_llmselect_depth
+        )
+        sections_by_doc: dict[uuid.UUID, list[tuple[str, str]]] = {}
+        for node in nodes:
+            sections_by_doc.setdefault(node.document_id, []).append(
+                (
+                    node.toc_path or node.title or "(root)",
+                    node.summary or "(no summary)",
+                )
+            )
+        return sections_by_doc
+
+    def _preselected(
+        self,
+        session: Session,
+        document_ids: list[uuid.UUID],
+    ) -> list[tuple[uuid.UUID, float]]:
+        """Build the fused document list from a caller-supplied selection.
+
+        Stands in for _fuse when the caller has already chosen. Order is
+        preserved -- it is the caller's ranking -- and every document scores
+        1.0, since a selection carries no gradation.
+
+        Raises RetrievalError naming any id that is not in the corpus, rather
+        than silently returning fewer documents than were asked for.
+        """
+        if not document_ids:
+            raise RetrievalError("No documents supplied. Omit the selection to search all.")
+
+        known = set(
+            session.execute(select(Document.id).where(Document.id.in_(document_ids)))
+            .scalars()
+            .all()
+        )
+        missing = [str(d) for d in document_ids if d not in known]
+        if missing:
+            raise RetrievalError(
+                f"Unknown document_id(s): {', '.join(missing)}. List the corpus with `list`."
+            )
+
+        # Preserve the caller's order, dropping repeats.
+        ordered: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for doc_id in document_ids:
+            if doc_id not in seen:
+                seen.add(doc_id)
+                ordered.append(doc_id)
+        return [(doc_id, 1.0) for doc_id in ordered]
 
     def _fuse(
         self,

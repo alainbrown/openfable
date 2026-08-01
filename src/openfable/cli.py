@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from openfable.db import SessionLocal
-from openfable.exceptions import ChunkingError, TreeConstructionError
+from openfable.exceptions import ChunkingError, RetrievalError, TreeConstructionError
 from openfable.repositories.document_repo import (
     DocumentRepository,
     compute_content_hash,
@@ -234,8 +234,59 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_candidates(args: argparse.Namespace) -> int:
+    """List each document's shallow table of contents, for choosing before querying.
+
+    This is the material the service would otherwise hand an LLM to pick
+    documents. Read it, decide which documents are relevant, then pass them to
+    `query --documents`.
+    """
+    from openfable.services.retrieval_service import get_retrieval_service
+
+    repo = DocumentRepository()
+    service = get_retrieval_service()
+
+    with SessionLocal() as session:
+        abstractions = service.document_abstractions(session)
+        docs = {d.id: d for d in repo.list_all(session)}
+
+        items = []
+        for doc_id, sections in abstractions.items():
+            doc = docs.get(doc_id)
+            items.append(
+                {
+                    "document_id": doc_id,
+                    "token_count": doc.token_count if doc else None,
+                    "sections": [
+                        {"toc_path": toc, "summary": summary} for toc, summary in sections
+                    ],
+                }
+            )
+
+        _emit(
+            {
+                "total": len(items),
+                "documents": items,
+                "next": (
+                    "Choose the documents whose sections could answer the question, then: "
+                    "openfable query <text> --budget N --vector-only --documents <id>[,<id>...]. "
+                    "Omit --documents to search the whole corpus, where ranking follows "
+                    "document-root similarity more than chunk relevance."
+                ),
+            }
+        )
+    return 0
+
+
 def cmd_query(args: argparse.Namespace) -> int:
     from openfable.services.retrieval_service import get_retrieval_service
+
+    document_ids: list[uuid.UUID] | None = None
+    if args.documents:
+        try:
+            document_ids = [uuid.UUID(d) for d in args.documents.split(",") if d.strip()]
+        except ValueError as exc:
+            return _fail(f"--documents must be a comma-separated list of document_ids: {exc}")
 
     service = get_retrieval_service()
     if args.vector_only:
@@ -249,7 +300,10 @@ def cmd_query(args: argparse.Namespace) -> int:
         service.llm = _NoLLM()  # type: ignore[assignment]
 
     with SessionLocal() as session:
-        response = service.query(session, args.query, args.budget)
+        try:
+            response = service.query(session, args.query, args.budget, document_ids)
+        except RetrievalError as exc:
+            return _fail(str(exc))
         _emit(response.model_dump())
     return 0
 
@@ -353,7 +407,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip LLMselect/LLMnavigate; needs no LLM",
     )
+    p.add_argument(
+        "--documents",
+        default="",
+        help="comma-separated document_ids to search; omit to search the whole corpus",
+    )
     p.set_defaults(func=cmd_query)
+
+    p = sub.add_parser("candidates", help="list documents with their table of contents")
+    p.set_defaults(func=cmd_candidates)
 
     p = sub.add_parser("list", help="list indexed documents")
     p.set_defaults(func=cmd_list)
