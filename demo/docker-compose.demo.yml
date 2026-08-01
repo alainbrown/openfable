@@ -47,7 +47,7 @@ services:
     tty: true
     command: >
       sh -c "
-      uv sync --frozen --group e2e &&
+      uv sync --frozen --group demo &&
       asciinema rec /app/demo/demo.cast --overwrite --command '.venv/bin/python demo/mcp_demo.py' &&
       agg /app/demo/demo.cast /app/demo/demo.gif
       "

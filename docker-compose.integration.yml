@@ -1,0 +1,69 @@
+# Integration tests: a real PostgreSQL and a deterministic stand-in for the
+# LLM provider, plus the runner itself.
+#
+# Do not run this by hand. Use:
+#
+#   ./scripts/integration-test.sh
+#
+# which tears down first, runs once, and tears down after. There is no
+# long-lived stack to start or stop: a run begins with an empty database and
+# ends with nothing left behind.
+#
+# `tests` cannot start until both services report healthy, so there is no
+# state where tests execute against a stack that is not up.
+name: openfable-integration
+
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["uv", "run", "pytest", "--tb=short", "-q"]
+    environment:
+      # Service names, resolved on the compose network. Fixed here so the
+      # tests can never run against a half-configured environment.
+      OPENFABLE_TEST_DATABASE_URL: "postgresql://openfable:openfable@db:5432/openfable"
+      OPENFABLE_TEST_LLM_BASE_URL: "http://agent-testkit:8080/openai/v1"
+    volumes:
+      - .:/app
+      # Keeps the container's virtualenv out of the working tree. Without
+      # this, `uv sync` writes /app/.venv onto the host through the bind
+      # mount and leaves a venv that looks runnable but is not.
+      - testsvenv:/app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      agent-testkit:
+        condition: service_healthy
+
+  # Deterministic OpenAI-compatible provider. Behaviours are matched on facts
+  # about the request -- see tests/integration/agent-testkit.config.ts.
+  # Pinned to a release tag; `main` moves.
+  agent-testkit:
+    build:
+      context: https://github.com/agent-testkit/agent-testkit.git#v0.1.2
+    volumes:
+      - ./tests/integration/agent-testkit.config.ts:/config/agent-testkit.config.ts:ro
+    command: ["--config", "/config/agent-testkit.config.ts"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: openfable
+      POSTGRES_PASSWORD: openfable
+      POSTGRES_DB: openfable
+    # No volume: the database is thrown away with the container, so every run
+    # starts from an empty schema.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfable -d openfable"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  testsvenv:

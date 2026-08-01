@@ -32,11 +32,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - run: uv sync --frozen --dev
-
-      - name: Unit tests
-        run: uv run pytest --tb=short -q
+      # The same command developers run. It brings up PostgreSQL and the
+      # deterministic LLM provider, runs every test once, and tears the stack
+      # down again -- including on failure.
+      - name: Tests
+        run: ./scripts/integration-test.sh

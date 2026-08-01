@@ -51,6 +51,25 @@ uv run ruff format --check src/ tests/
 uv run mypy src/
 ```
 
+## Tests
+
+```bash
+./scripts/integration-test.sh              # everything
+./scripts/integration-test.sh -k retry     # any pytest arguments
+```
+
+One operation: it starts PostgreSQL and a deterministic LLM provider, runs the
+suite once against them, and tears everything down again -- including on
+failure or Ctrl-C. Every run begins with an empty database, so nothing carries
+over between runs. CI runs the same command.
+
+The provider is [agent-testkit](https://github.com/agent-testkit/agent-testkit),
+pinned to a release tag. Its behaviours live in
+`tests/integration/agent-testkit.config.ts` and are matched on fragments of
+each prompt, so **changing a prompt's opening words breaks them**. The server
+also errors when several behaviours match rather than taking the first, which
+is why case-specific behaviours carry `priority: 10`.
+
 ## Working on the skill
 
 The Claude Code plugin lives in `skills/openfable/`, with manifests in
