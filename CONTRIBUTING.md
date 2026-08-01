@@ -21,10 +21,7 @@ docker compose -f docker-compose.dev.yml run --rm api
 ```
 
 ```bash
-# Run unit tests
-.venv/bin/pytest -m "not integration"
-
-# Run all tests (integration tests use the dev compose PostgreSQL)
+# Tests
 .venv/bin/pytest
 
 # Lint and type check
@@ -40,13 +37,7 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/):
 uv sync --dev
 ```
 
-Unit tests (no external services needed):
-
-```bash
-uv run pytest -m "not integration"
-```
-
-Integration tests (requires Docker for PostgreSQL via testcontainers):
+Tests (no external services needed):
 
 ```bash
 uv run pytest
