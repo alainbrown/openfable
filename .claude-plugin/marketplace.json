@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Agent-driven retrieval over long documents",
-    "version": "0.2.1"
+    "version": "0.2.2"
   },
   "plugins": [
     {

@@ -1,6 +1,6 @@
 [project]
 name = "openfable"
-version = "0.2.1"
+version = "0.2.2"
 description = "FABLE retrieval engine - structured, hierarchy-aware RAG"
 authors = [
     { name = "Alain Brown" }
